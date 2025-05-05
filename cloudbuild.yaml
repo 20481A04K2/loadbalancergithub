@@ -70,7 +70,7 @@ steps:
           --version="$$VERSION_TAG" \
           --source="source.zip"
 
-  # Step 6: Create a new versioned instance template
+  # Step 6: Create Instance Template with startup script
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -83,63 +83,41 @@ steps:
           --tags=allow-8080 \
           --region=asia-east1 \
           --metadata=startup-script='#! /bin/bash
-            apt-get update
+            exec > /var/log/startup-script.log 2>&1
+            echo "Startup script started."
+            apt-get update -y
             apt-get install -y unzip python3-pip curl
-            curl -o /home/sajja_vamsi/source.zip https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'"$$VERSION_TAG"'/source.zip
-            unzip -o /home/sajja_vamsi/source.zip -d /home/sajja_vamsi/my-app
-            cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main
+            mkdir -p /home/sajja_vamsi/my-app
+            cd /home/sajja_vamsi
+            curl -fL -o source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$$VERSION_TAG/source.zip"
+            unzip -o source.zip -d /home/sajja_vamsi/my-app
+            cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main || exit 1
             pip3 install flask
-            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &'
+            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &
+            echo "Startup script finished."'
 
-# Step 7: Create or Update MIG
+  # Step 7: Create or Update MIG
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create or Update MIG'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        MIG_NAME="vamsi-mig"
-        # Fetch version tag
         source /workspace/version.env
         echo "Using version tag: $$VERSION_TAG"
-        
-        # Ensure health check exists before creating MIG
-        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 > /dev/null 2>&1; then
-          echo "Health check does not exist, creating it..."
-          gcloud compute health-checks create http vamsi-health-check \
-            --region=asia-east1 \
-            --port=8080 \
-            --request-path="/" \
-            --check-interval=5s \
-            --timeout=5s \
-            --healthy-threshold=2 \
-            --unhealthy-threshold=2 \
-            --project=enhub-cloud-interns
-        else
-          echo "Health check already exists."
-        fi
-        
-        # Check if MIG exists
-        if gcloud compute instance-groups managed describe $$MIG_NAME --region=asia-east1 > /dev/null 2>&1; then
-          echo "MIG $$MIG_NAME exists, updating it..."
-          gcloud compute instance-groups managed set-instance-template $$MIG_NAME \
+        if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
+          echo "MIG vamsi-mig does not exist, creating it..."
+          gcloud compute instance-groups managed create vamsi-mig \
+            --base-instance-name=vamsi-instance \
             --template=vamsi-template-$$VERSION_TAG \
-            --zone=asia-east1-b \
-            --project=enhub-cloud-interns
-        else
-          echo "MIG $$MIG_NAME does not exist, creating it..."
-          if [ -z "$$VERSION_TAG" ]; then
-            echo "ERROR: VERSION_TAG is empty!"
-            exit 1
-          fi
-          # Create MIG with health check
-          gcloud compute instance-groups managed create $$MIG_NAME \
-            --template=vamsi-template-$$VERSION_TAG \
-            --zone=asia-east1-b \
             --size=1 \
-            --health-check=vamsi-health-check \
-            --initial-delay=60s \
-            --project=enhub-cloud-interns
+            --zone=asia-east1-b \
+            --initial-delay=60s
+        else
+          echo "MIG already exists, updating template..."
+          gcloud compute instance-groups managed set-instance-template vamsi-mig \
+            --template=vamsi-template-$$VERSION_TAG \
+            --zone=asia-east1-b
         fi
 
   # Step 8: Create firewall rule if not exists
@@ -160,7 +138,7 @@ steps:
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create Health Check (fix path)
+  # Step 9: Create health check (if needed)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
@@ -178,52 +156,35 @@ steps:
             --unhealthy-threshold=2 \
             --project=enhub-cloud-interns
         else
-          echo "Health check already exists"
+          echo "Health check already exists."
         fi
 
-  # Step 10: Enable Autohealing for MIG
+  # Step 10: Attach health check for autohealing
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Autohealing'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        source /workspace/version.env
         gcloud compute instance-groups managed update vamsi-mig \
-          --region=asia-east1 \
+          --zone=asia-east1-b \
           --health-check=vamsi-health-check \
           --initial-delay=60s \
           --project=enhub-cloud-interns
 
-  # Step 11: Enable autoscaling based on CPU utilization
+  # Step 11: Enable autoscaling
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Enable Autoscaling'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        source /workspace/version.env
         gcloud compute instance-groups managed set-autoscaling vamsi-mig \
           --zone=asia-east1-b \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
           --target-cpu-utilization=0.01 \
           --cool-down-period=60s \
-          --project=enhub-cloud-interns
-
-  # Step 12: Create Load Balancer
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Create Load Balancer'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        source /workspace/version.env
-        gcloud compute forwarding-rules create vamsi-lb-rule \
-          --region=asia-east1 \
-          --ports=8080 \
-          --address=0.0.0.0 \
-          --target-pool=vamsi-lb-pool \
           --project=enhub-cloud-interns
 
 options:
