@@ -7,8 +7,8 @@ steps:
       - '-c'
       - |
         VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
-        echo "Generated version: $VERSION_TAG"
+        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $$VERSION_TAG"
 
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -64,13 +64,13 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Uploading ZIP to Artifact Registry with version: $VERSION_TAG"
+        echo "Uploading ZIP to Artifact Registry with version: $$VERSION_TAG"
         gcloud artifacts generic upload \
           --project="enhub-cloud-interns" \
           --location="asia-east1" \
           --repository="vamsi-zip-repo" \
           --package="source-package" \
-          --version="$VERSION_TAG" \
+          --version="$$VERSION_TAG" \
           --source="source.zip"
         echo "Upload completed"
 
@@ -81,7 +81,7 @@ steps:
     args:
       - '-c'
       - |
-        VERSION_TAG=$(cat /workspace/version.env | cut -d'=' -f2)
+        VERSION_TAG=$$(cat /workspace/version.env | cut -d'=' -f2)
         gcloud compute instance-templates create my-template \
           --machine-type=e2-micro \
           --image-family=debian-11 \
@@ -90,7 +90,7 @@ steps:
             set -e
             sudo apt-get update
             sudo apt-get install -y unzip python3-pip
-            curl -o /home/sajja_vamsi/source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'$VERSION_TAG'/source.zip"
+            curl -o /home/sajja_vamsi/source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'$$VERSION_TAG'/source.zip"
             mkdir -p /home/sajja_vamsi/my-app
             unzip -o /home/sajja_vamsi/source.zip -d /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main
