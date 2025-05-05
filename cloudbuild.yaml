@@ -1,5 +1,5 @@
 steps:
-  # Step 0: Generate dynamic version
+  # Step 0: Generate dynamic version tag
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Generate Version'
     entrypoint: 'bash'
@@ -7,8 +7,8 @@ steps:
       - '-c'
       - |
         VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
-        echo "Generated version: $VERSION_TAG"
+        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $$VERSION_TAG"
 
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -94,7 +94,7 @@ steps:
             mkdir -p /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi
             TOKEN=$(gcloud auth print-access-token)
-            curl -fL -H "Authorization: Bearer $TOKEN" \
+            curl -fL -H "Authorization: Bearer $$TOKEN" \
               -o source.zip \
               "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$$VERSION_TAG/source.zip"
             unzip -o source.zip -d my-app
