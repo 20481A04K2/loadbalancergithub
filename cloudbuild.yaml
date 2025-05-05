@@ -7,8 +7,8 @@ steps:
       - '-c'
       - |
         VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
-        echo "Generated version: $$VERSION_TAG"
+        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $VERSION_TAG"
 
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -64,17 +64,17 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Uploading ZIP to Artifact Registry with version: $$VERSION_TAG"
+        echo "Uploading ZIP to Artifact Registry with version: $VERSION_TAG"
         gcloud artifacts generic upload \
           --project="enhub-cloud-interns" \
           --location="asia-east1" \
           --repository="vamsi-zip-repo" \
           --package="source-package" \
-          --version="$$VERSION_TAG" \
+          --version="$VERSION_TAG" \
           --source="source.zip"
         echo "Upload completed"
-  
-  # Step 6: Create Instance Template with startup script
+
+  # Step 6: Create Instance Template with fixed startup script
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -82,7 +82,7 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud compute instance-templates create vamsi-template-$$VERSION_TAG \
+        gcloud compute instance-templates create vamsi-template-$VERSION_TAG \
           --machine-type=e2-micro \
           --tags=allow-8080 \
           --region=asia-east1 \
@@ -93,7 +93,10 @@ steps:
             apt-get install -y unzip python3-pip curl
             mkdir -p /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi
-            curl -fL -o source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$$VERSION_TAG/source.zip"
+            TOKEN=$(gcloud auth print-access-token)
+            curl -fL -H "Authorization: Bearer $TOKEN" \
+              -o source.zip \
+              "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'$VERSION_TAG'/source.zip"
             unzip -o source.zip -d my-app
             cd my-app/* || exit 1
             pip3 install flask
@@ -108,26 +111,23 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Using version tag: $$VERSION_TAG"
-        
+        echo "Using version tag: $VERSION_TAG"
         if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
           echo "MIG vamsi-mig does not exist, creating it..."
           gcloud compute instance-groups managed create vamsi-mig \
             --base-instance-name=vamsi-instance \
-            --template=vamsi-template-$$VERSION_TAG \
+            --template=vamsi-template-$VERSION_TAG \
             --size=1 \
             --zone=asia-east1-b \
             --initial-delay=60s
         else
           echo "MIG already exists, updating template..."
           gcloud compute instance-groups managed set-instance-template vamsi-mig \
-            --template=vamsi-template-$$VERSION_TAG \
+            --template=vamsi-template-$VERSION_TAG \
             --zone=asia-east1-b
-          
-          echo "Triggering rolling restart of MIG instances to apply the new startup script..."
+          echo "Forcing rolling restart to apply new template..."
           gcloud compute instance-groups managed rolling-action restart vamsi-mig \
-            --zone=asia-east1-b \
-            --project=enhub-cloud-interns
+            --zone=asia-east1-b
         fi
 
   # Step 8: Create firewall rule if not exists
@@ -148,7 +148,7 @@ steps:
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create health check (if needed)
+  # Step 9: Create health check
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
