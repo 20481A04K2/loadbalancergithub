@@ -92,7 +92,7 @@ steps:
       - --machine-type=e2-micro
       - --image-family=debian-11
       - --image-project=debian-cloud
-      - --metadata=startup-script=|
+      - --metadata=startup-script: |
           #!/bin/bash
           apt-get update
           apt-get install -y unzip python3-pip
