@@ -150,7 +150,7 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud beta compute instance-groups managed set-autohealing vamsi-mig \
+        gcloud compute instance-groups managed update vamsi-mig \
           --region=asia-east1 \
           --health-check=vamsi-health-check \
           --initial-delay=60s \
