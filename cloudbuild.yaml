@@ -91,17 +91,29 @@ steps:
             pip3 install flask
             nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &'
 
-  # Step 7: Update MIG to use new template
+  # Step 7: Check if MIG exists, if not, create it; if it exists, update it
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Update MIG'
+    id: 'Create or Update MIG'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud compute instance-groups managed set-instance-template vamsi-mig \
-          --template=vamsi-template-$$VERSION_TAG \
-          --zone=asia-east1-b
+        MIG_NAME="vamsi-mig"
+        if ! gcloud compute instance-groups managed describe $MIG_NAME --region=asia-east1 > /dev/null 2>&1; then
+          echo "MIG does not exist, creating it..."
+          gcloud compute instance-groups managed create $MIG_NAME \
+            --template=vamsi-template-$$VERSION_TAG \
+            --size=1 \
+            --zone=asia-east1-b \
+            --project=enhub-cloud-interns
+        else
+          echo "MIG exists, updating it..."
+          gcloud compute instance-groups managed set-instance-template $MIG_NAME \
+            --template=vamsi-template-$$VERSION_TAG \
+            --zone=asia-east1-b \
+            --project=enhub-cloud-interns
+        fi
 
   # Step 8: Create firewall rule if not exists
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -155,7 +167,6 @@ steps:
           --health-check=vamsi-health-check \
           --initial-delay=60s \
           --project=enhub-cloud-interns
-
 
   # Step 11: Enable autoscaling based on CPU utilization
   - name: 'gcr.io/cloud-builders/gcloud'
