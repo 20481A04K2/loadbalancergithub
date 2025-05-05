@@ -91,7 +91,7 @@ steps:
             pip3 install flask
             nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &'
 
-  # Step 7: Create or Update MIG
+# Step 7: Create or Update MIG
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create or Update MIG'
     entrypoint: 'bash'
@@ -124,7 +124,8 @@ steps:
           echo "MIG $$MIG_NAME exists, updating it..."
           gcloud compute instance-groups managed set-instance-template $$MIG_NAME \
             --template=vamsi-template-$$VERSION_TAG \
-            --zone=asia-east1-b
+            --zone=asia-east1-b \
+            --project=enhub-cloud-interns
         else
           echo "MIG $$MIG_NAME does not exist, creating it..."
           if [ -z "$$VERSION_TAG" ]; then
