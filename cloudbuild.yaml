@@ -158,7 +158,7 @@ steps:
       - http
       - $_HEALTH_CHECK
       - --port=8080
-      - --request-path="/healthz"
+      - --request-path="/"
       - --check-interval=30s
       - --timeout=10s
       - --unhealthy-threshold=3
