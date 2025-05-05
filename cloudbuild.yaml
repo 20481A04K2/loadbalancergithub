@@ -70,7 +70,7 @@ steps:
           --version="$$VERSION_TAG" \
           --source="source.zip"
 
-  # Step 6: Create Instance Template with improved startup script
+  # Step 6: Create Instance Template with startup script
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -87,30 +87,16 @@ steps:
             echo "Startup script started."
             apt-get update -y
             apt-get install -y unzip python3-pip curl
-            mkdir -p /home/sajja_vamsi
+            mkdir -p /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi
-
-            # Install gcloud CLI
-            curl -sSL https://sdk.cloud.google.com | bash
-            exec -l $SHELL
-            source ~/.bashrc
-            gcloud components install --quiet
-            gcloud auth activate-service-account --key-file=/etc/gce-ssh-keys/key.json
-
-            # Download from Artifact Registry
-            gcloud artifacts files download source-package@$$VERSION_TAG \
-              --project=enhub-cloud-interns \
-              --location=asia-east1 \
-              --repository=vamsi-zip-repo \
-              --destination=source.zip
-
+            curl -fL -o source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$$VERSION_TAG/source.zip"
             unzip -o source.zip -d my-app
             cd my-app/* || exit 1
             pip3 install flask
-            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 & disown
-            echo "Flask app started."'
+            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &
+            echo "Startup script finished."'
 
-  # Step 7: Create or update MIG
+  # Step 7: Create or Update MIG
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create or Update MIG'
     entrypoint: 'bash'
@@ -118,7 +104,9 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
+        echo "Using version tag: $$VERSION_TAG"
         if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
+          echo "MIG vamsi-mig does not exist, creating it..."
           gcloud compute instance-groups managed create vamsi-mig \
             --base-instance-name=vamsi-instance \
             --template=vamsi-template-$$VERSION_TAG \
@@ -126,9 +114,11 @@ steps:
             --zone=asia-east1-b \
             --initial-delay=60s
         else
+          echo "MIG already exists, updating template..."
           gcloud compute instance-groups managed set-instance-template vamsi-mig \
             --template=vamsi-template-$$VERSION_TAG \
             --zone=asia-east1-b
+        fi
 
   # Step 8: Create firewall rule if not exists
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -144,9 +134,11 @@ steps:
             --direction=INGRESS \
             --priority=1000 \
             --project=enhub-cloud-interns
+        else
+          echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create health check (if not exists)
+  # Step 9: Create health check (if needed)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
@@ -163,6 +155,8 @@ steps:
             --healthy-threshold=2 \
             --unhealthy-threshold=2 \
             --project=enhub-cloud-interns
+        else
+          echo "Health check already exists."
         fi
 
   # Step 10: Attach health check for autohealing
@@ -185,17 +179,13 @@ steps:
     args:
       - '-c'
       - |
-        if gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
-          gcloud compute instance-groups managed set-autoscaling vamsi-mig \
-            --zone=asia-east1-b \
-            --min-num-replicas=1 \
-            --max-num-replicas=5 \
-            --target-cpu-utilization=0.01 \
-            --cool-down-period=60s \
-            --project=enhub-cloud-interns
-        else
-          echo "MIG not found; skipping autoscaling."
-        fi
+        gcloud compute instance-groups managed set-autoscaling vamsi-mig \
+          --zone=asia-east1-b \
+          --min-num-replicas=1 \
+          --max-num-replicas=5 \
+          --target-cpu-utilization=0.01 \
+          --cool-down-period=60s \
+          --project=enhub-cloud-interns
 
 options:
   logging: CLOUD_LOGGING_ONLY
