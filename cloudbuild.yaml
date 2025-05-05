@@ -90,8 +90,8 @@ steps:
             mkdir -p /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi
             curl -fL -o source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$$VERSION_TAG/source.zip"
-            unzip -o source.zip -d /home/sajja_vamsi/my-app
-            cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main || exit 1
+            unzip -o source.zip -d my-app
+            cd my-app/* || exit 1
             pip3 install flask
             nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &
             echo "Startup script finished."'
