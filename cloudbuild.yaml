@@ -103,6 +103,22 @@ steps:
         source /workspace/version.env
         echo "Using version tag: $$VERSION_TAG"
         
+        # Ensure health check exists before creating MIG
+        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 > /dev/null 2>&1; then
+          echo "Health check does not exist, creating it..."
+          gcloud compute health-checks create http vamsi-health-check \
+            --region=asia-east1 \
+            --port=8080 \
+            --request-path="/" \
+            --check-interval=5s \
+            --timeout=5s \
+            --healthy-threshold=2 \
+            --unhealthy-threshold=2 \
+            --project=enhub-cloud-interns
+        else
+          echo "Health check already exists."
+        fi
+        
         # Check if MIG exists
         if gcloud compute instance-groups managed describe $$MIG_NAME --region=asia-east1 > /dev/null 2>&1; then
           echo "MIG $$MIG_NAME exists, updating it..."
@@ -115,6 +131,7 @@ steps:
             echo "ERROR: VERSION_TAG is empty!"
             exit 1
           fi
+          # Create MIG with health check
           gcloud compute instance-groups managed create $$MIG_NAME \
             --template=vamsi-template-$$VERSION_TAG \
             --zone=asia-east1-b \
@@ -142,7 +159,7 @@ steps:
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create health check (fix path)
+  # Step 9: Create Health Check (fix path)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
@@ -171,8 +188,7 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        MIG_NAME="vamsi-mig"
-        gcloud compute instance-groups managed update $$MIG_NAME \
+        gcloud compute instance-groups managed update vamsi-mig \
           --region=asia-east1 \
           --health-check=vamsi-health-check \
           --initial-delay=60s \
@@ -186,7 +202,7 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud compute instance-groups managed set-autoscaling $$MIG_NAME \
+        gcloud compute instance-groups managed set-autoscaling vamsi-mig \
           --zone=asia-east1-b \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
