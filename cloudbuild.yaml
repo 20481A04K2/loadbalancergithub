@@ -133,14 +133,59 @@ steps:
             --region=asia-east1 \
             --port=8080 \
             --request-path="/" \
-            --check-interval=15s \
-            --timeout=10s \
+            --check-interval=5s \
+            --timeout=5s \
             --healthy-threshold=2 \
-            --unhealthy-threshold=3 \
+            --unhealthy-threshold=2 \
             --project=enhub-cloud-interns
         else
           echo "Health check already exists"
         fi
+
+  # Step 10: Enable Autohealing for MIG
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Autohealing'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        source /workspace/version.env
+        gcloud compute instance-groups managed set-autohealing vamsi-mig \
+          --region=asia-east1 \
+          --health-check=vamsi-health-check \
+          --initial-delay=60s \
+          --project=enhub-cloud-interns
+
+  # Step 11: Enable autoscaling based on CPU utilization
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Enable Autoscaling'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        source /workspace/version.env
+        gcloud compute instance-groups managed set-autoscaling vamsi-mig \
+          --zone=asia-east1-b \
+          --min-num-replicas=1 \
+          --max-num-replicas=5 \
+          --target-cpu-utilization=0.01 \
+          --cool-down-period=60s \
+          --project=enhub-cloud-interns
+
+  # Step 12: Create Load Balancer
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Load Balancer'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        source /workspace/version.env
+        gcloud compute forwarding-rules create vamsi-lb-rule \
+          --region=asia-east1 \
+          --ports=8080 \
+          --address=0.0.0.0 \
+          --target-pool=vamsi-lb-pool \
+          --project=enhub-cloud-interns
 
 options:
   logging: CLOUD_LOGGING_ONLY
