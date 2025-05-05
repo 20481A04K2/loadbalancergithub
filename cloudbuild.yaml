@@ -7,8 +7,8 @@ steps:
       - '-c'
       - |
         VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
-        echo "Generated version: $VERSION_TAG"
+        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $$VERSION_TAG"
 
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -21,6 +21,7 @@ steps:
           gcloud artifacts repositories create vamsi-zip-repo --repository-format=generic --location=asia-east1 --project=enhub-cloud-interns
         else
           echo "Repository already exists."
+        fi
 
   # Step 2: Download ZIP file from GitHub
   - name: 'gcr.io/cloud-builders/curl'
@@ -45,7 +46,7 @@ steps:
         gcloud auth activate-service-account --key-file=/workspace/key.json
         echo "Authentication successful"
 
-  # Step 4: Show ZIP File Size
+  # Step 4: Show ZIP file size
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Show ZIP File Size'
     entrypoint: '/bin/sh'
@@ -55,7 +56,7 @@ steps:
         echo "The size of the downloaded ZIP file:"
         du -sh source.zip
 
-  # Step 5: Upload ZIP to Artifact Registry with dynamic version
+  # Step 5: Upload ZIP to Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Upload to Artifact Registry'
     entrypoint: 'bash'
@@ -63,13 +64,13 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Uploading ZIP to Artifact Registry with version: $VERSION_TAG"
+        echo "Uploading ZIP to Artifact Registry with version: $$VERSION_TAG"
         gcloud artifacts generic upload \
           --project="enhub-cloud-interns" \
           --location="asia-east1" \
           --repository="vamsi-zip-repo" \
           --package="source-package" \
-          --version="$VERSION_TAG" \
+          --version="$$VERSION_TAG" \
           --source="source.zip"
         echo "Upload completed"
 
@@ -85,15 +86,14 @@ steps:
           --machine-type=e2-micro \
           --image-family=debian-11 \
           --image-project=debian-cloud \
-          --tags=http-server \
-          --metadata=startup-script='#!/bin/bash
-            apt-get update
-            apt-get install -y unzip python3-pip curl
-            curl -o /tmp/source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$VERSION_TAG/artifacts/source.zip" 
-            unzip /tmp/source.zip -d /opt/app
-            cd /opt/app/cloudbuildzipfile-main
-            pip3 install flask
-            nohup python3 app.py > /var/log/app.log 2>&1 &'
+          --metadata=startup-script="#!/bin/bash
+          apt-get update
+          apt-get install -y unzip python3-pip curl
+          curl -o /tmp/source.zip https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$$VERSION_TAG/source.zip
+          unzip /tmp/source.zip -d /opt/app
+          cd /opt/app/cloudbuildzipfile-main
+          pip3 install flask
+          nohup python3 app.py > /var/log/app.log 2>&1 &"
 
   # Step 7: Create Managed Instance Group
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -124,7 +124,7 @@ steps:
       - --target-cpu-utilization=0.01
       - --cool-down-period=60
 
-  # Step 9: Create Firewall Rule to allow port 8080
+  # Step 9: Create Firewall Rule for Port 8080
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Firewall Rule'
     args:
@@ -134,12 +134,12 @@ steps:
       - allow-8080
       - --allow=tcp:8080
       - --target-tags=http-server
-      - --description=Allow-port-8080
+      - --description=Allow-8080
       - --direction=INGRESS
       - --priority=1000
       - --network=default
 
-  # Step 10: Create Health Check on port 8080
+  # Step 10: Create Health Check on Port 8080
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Health Check'
     args:
@@ -195,7 +195,7 @@ steps:
       - my-http-proxy
       - --url-map=my-url-map
 
-  # Step 15: Create Global Forwarding Rule (uses ephemeral IP)
+  # Step 15: Create Global Forwarding Rule (no static IP)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Forwarding Rule'
     args:
@@ -206,7 +206,6 @@ steps:
       - --global
       - --target-http-proxy=my-http-proxy
       - --ports=80
-      - --load-balancing-scheme=EXTERNAL
 
 options:
   logging: CLOUD_LOGGING_ONLY
