@@ -10,8 +10,6 @@ steps:
         echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
         echo "Generated version: $$VERSION_TAG"
         gcloud logging write build-log "Generated version: $$VERSION_TAG"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -27,8 +25,6 @@ steps:
           echo "Repository already exists."
           gcloud logging write build-log "Repository already exists: vamsi-zip-repo"
         fi
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 2: Download ZIP file from GitHub
   - name: 'gcr.io/cloud-builders/curl'
@@ -41,8 +37,6 @@ steps:
         curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
         echo "Download completed"
         gcloud logging write build-log "GitHub ZIP file downloaded"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 3: Authenticate with Google Cloud
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -56,8 +50,6 @@ steps:
         gcloud auth activate-service-account --key-file=/workspace/key.json
         echo "Authentication successful"
         gcloud logging write build-log "Authentication with Google Cloud successful"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 4: Show ZIP file size
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -69,8 +61,6 @@ steps:
         echo "The size of the downloaded ZIP file:"
         du -sh source.zip
         gcloud logging write build-log "ZIP file size: $(du -sh source.zip)"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 5: Upload ZIP to Artifact Registry with dynamic version
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -90,8 +80,6 @@ steps:
           --source="source.zip"
         echo "Upload completed"
         gcloud logging write build-log "ZIP file uploaded to Artifact Registry: $$VERSION_TAG"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 6: Create Instance Template with Startup Script
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -114,8 +102,6 @@ steps:
           nohup python3 app.py > /var/log/app.log 2>&1 &'
       - |
         gcloud logging write build-log "Instance template created: my-template"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 7: Create Managed Instance Group (MIG)
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -132,8 +118,6 @@ steps:
       - --zone=asia-east1-b
       - |
         gcloud logging write build-log "MIG created: my-mig"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 8: Create HTTP Load Balancer
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -146,8 +130,6 @@ steps:
       - --region=asia-east1
       - |
         gcloud logging write build-log "Target pool created: my-target-pool"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 9: Create Health Check
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -166,8 +148,6 @@ steps:
       - --healthy-threshold=2
       - |
         gcloud logging write build-log "Health check created for MIG on port 8080"
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 10: Check Firewall Rule and Create/Update if Needed
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -185,8 +165,6 @@ steps:
           gcloud compute firewall-rules create allow-8080 --allow=tcp:8080 --target-tags=http-server --network=default --project=enhub-cloud-interns
           gcloud logging write build-log "Firewall rule 'allow-8080' created."
         fi
-    options:
-      logging: CLOUD_LOGGING_ONLY
 
   # Step 11: Set Autoscaling for MIG
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -204,5 +182,7 @@ steps:
       - --target-cpu-utilization=0.01
       - |
         gcloud logging write build-log "Autoscaling set for MIG: my-mig-autoscaler"
-    options:
-      logging: CLOUD_LOGGING_ONLY
+
+# Logging configuration at the build level
+options:
+  logging: CLOUD_LOGGING_ONLY
