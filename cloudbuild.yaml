@@ -1,5 +1,5 @@
 steps:
-  # Step 0: Generate dynamic version
+  # Step 0: Generate dynamic version tag
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Generate Version'
     entrypoint: 'bash'
@@ -7,10 +7,10 @@ steps:
       - '-c'
       - |
         VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
-        echo "Generated version: $VERSION_TAG"
+        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $$VERSION_TAG"
 
-  # Step 1: Check/create Artifact Registry
+  # Step 1: Check or create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
@@ -34,7 +34,7 @@ steps:
       - |
         curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
 
-  # Step 3: Authenticate with service account
+  # Step 3: Authenticate service account
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Authenticate'
     entrypoint: '/bin/sh'
@@ -44,32 +44,33 @@ steps:
         gsutil cp gs://vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json /workspace/key.json
         gcloud auth activate-service-account --key-file=/workspace/key.json
 
-  # Step 4: Show ZIP file size
+  # Step 4: Show file size
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Show ZIP File Size'
+    id: 'Show ZIP Size'
     entrypoint: '/bin/sh'
     args:
       - '-c'
       - |
         du -sh source.zip
 
-  # Step 5: Upload ZIP to Artifact Registry
+  # Step 5: Upload to Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Upload to Artifact Registry'
+    id: 'Upload ZIP'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         source /workspace/version.env
+        echo "Uploading source.zip as version $$VERSION_TAG"
         gcloud artifacts generic upload \
           --project="enhub-cloud-interns" \
           --location="asia-east1" \
           --repository="vamsi-zip-repo" \
           --package="source-package" \
-          --version="$VERSION_TAG" \
+          --version="$$VERSION_TAG" \
           --source="source.zip"
 
-  # Step 6: Create a new instance template (versioned)
+  # Step 6: Create a new versioned instance template
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -77,16 +78,15 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        TEMPLATE_NAME="vamsi-template-$VERSION_TAG"
-        gcloud compute instance-templates create $TEMPLATE_NAME \
+        gcloud compute instance-templates create vamsi-template-$$VERSION_TAG \
           --machine-type=e2-micro \
-          --region=asia-east1 \
           --tags=allow-8080 \
+          --region=asia-east1 \
           --metadata=startup-script='#! /bin/bash
             apt-get update
-            apt-get install -y unzip python3-pip
-            curl -o /tmp/source.zip https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'"$VERSION_TAG"'/source.zip
-            unzip /tmp/source.zip -d /home/sajja_vamsi/my-app
+            apt-get install -y unzip python3-pip curl
+            curl -o /home/sajja_vamsi/source.zip https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'"$$VERSION_TAG"'/source.zip
+            unzip -o /home/sajja_vamsi/source.zip -d /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main
             pip3 install flask
             nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &'
@@ -99,36 +99,36 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        TEMPLATE_NAME="vamsi-template-$VERSION_TAG"
         gcloud compute instance-groups managed set-instance-template vamsi-mig \
-          --template=$TEMPLATE_NAME \
+          --template=vamsi-template-$$VERSION_TAG \
           --zone=asia-east1-b
 
-  # Step 8: Update firewall (no-op if exists)
+  # Step 8: Create firewall rule if not exists
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Firewall'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud compute firewall-rules describe allow-8080; then
+        if ! gcloud compute firewall-rules describe allow-8080 --project=enhub-cloud-interns > /dev/null 2>&1; then
           gcloud compute firewall-rules create allow-8080 \
             --allow tcp:8080 \
             --target-tags=allow-8080 \
-            --description="Allow TCP port 8080" \
-            --direction=INGRESS
+            --direction=INGRESS \
+            --priority=1000 \
+            --project=enhub-cloud-interns
         else
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create health check (using root path)
+  # Step 9: Create health check (fix path)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1; then
+        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 > /dev/null 2>&1; then
           gcloud compute health-checks create http vamsi-health-check \
             --region=asia-east1 \
             --port=8080 \
@@ -136,7 +136,8 @@ steps:
             --check-interval=15s \
             --timeout=10s \
             --healthy-threshold=2 \
-            --unhealthy-threshold=3
+            --unhealthy-threshold=3 \
+            --project=enhub-cloud-interns
         else
           echo "Health check already exists"
         fi
@@ -144,6 +145,3 @@ steps:
 options:
   logging: CLOUD_LOGGING_ONLY
   defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
-
-substitutions:
-  _UNUSED: "unused"
