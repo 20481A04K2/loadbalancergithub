@@ -7,9 +7,8 @@ steps:
       - '-c'
       - |
         VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
-        echo "Generated version: $$VERSION_TAG"
-        gcloud logging write build-log "Generated version: $$VERSION_TAG"
+        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $VERSION_TAG"
 
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -20,10 +19,8 @@ steps:
         if ! gcloud artifacts repositories describe vamsi-zip-repo --location=asia-east1 --project=enhub-cloud-interns; then
           echo "Repository doesn't exist. Creating now."
           gcloud artifacts repositories create vamsi-zip-repo --repository-format=generic --location=asia-east1 --project=enhub-cloud-interns
-          gcloud logging write build-log "Repository created: vamsi-zip-repo"
         else
           echo "Repository already exists."
-          gcloud logging write build-log "Repository already exists: vamsi-zip-repo"
         fi
 
   # Step 2: Download ZIP file from GitHub
@@ -36,7 +33,6 @@ steps:
         echo "Starting download from GitHub..."
         curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
         echo "Download completed"
-        gcloud logging write build-log "GitHub ZIP file downloaded"
 
   # Step 3: Authenticate with Google Cloud
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -49,7 +45,6 @@ steps:
         gsutil cp gs://vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json /workspace/key.json
         gcloud auth activate-service-account --key-file=/workspace/key.json
         echo "Authentication successful"
-        gcloud logging write build-log "Authentication with Google Cloud successful"
 
   # Step 4: Show ZIP file size
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -60,7 +55,6 @@ steps:
       - |
         echo "The size of the downloaded ZIP file:"
         du -sh source.zip
-        gcloud logging write build-log "ZIP file size: $(du -sh source.zip)"
 
   # Step 5: Upload ZIP to Artifact Registry with dynamic version
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -70,38 +64,39 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Uploading ZIP to Artifact Registry with version: $$VERSION_TAG"
+        echo "Uploading ZIP to Artifact Registry with version: $VERSION_TAG"
         gcloud artifacts generic upload \
           --project="enhub-cloud-interns" \
           --location="asia-east1" \
           --repository="vamsi-zip-repo" \
           --package="source-package" \
-          --version="$$VERSION_TAG" \
+          --version="$VERSION_TAG" \
           --source="source.zip"
         echo "Upload completed"
-        gcloud logging write build-log "ZIP file uploaded to Artifact Registry: $$VERSION_TAG"
 
   # Step 6: Create Instance Template with Startup Script
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
+    entrypoint: 'bash'
     args:
-      - compute
-      - instance-templates
-      - create
-      - my-template
-      - --machine-type=e2-micro
-      - --image-family=debian-11
-      - --image-project=debian-cloud
-      - --metadata=startup-script='#!/bin/bash
-          apt-get update
-          apt-get install -y unzip python3-pip
-          curl -o /tmp/source.zip https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$(cat /workspace/version.env | cut -d"=" -f2)/source.zip
-          unzip /tmp/source.zip -d /opt/app
-          cd /opt/app
-          pip3 install flask
-          nohup python3 app.py > /var/log/app.log 2>&1 &'
+      - '-c'
       - |
-        gcloud logging write build-log "Instance template created: my-template"
+        VERSION_TAG=$(cat /workspace/version.env | cut -d'=' -f2)
+        gcloud compute instance-templates create my-template \
+          --machine-type=e2-micro \
+          --image-family=debian-11 \
+          --image-project=debian-cloud \
+          --metadata=startup-script='#!/bin/bash
+            set -e
+            sudo apt-get update
+            sudo apt-get install -y unzip python3-pip
+            curl -o /home/sajja_vamsi/source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'$VERSION_TAG'/source.zip"
+            mkdir -p /home/sajja_vamsi/my-app
+            unzip -o /home/sajja_vamsi/source.zip -d /home/sajja_vamsi/my-app
+            cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main
+            pip3 install --user flask
+            echo Starting Flask app...
+            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &'
 
   # Step 7: Create Managed Instance Group (MIG)
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -116,57 +111,8 @@ steps:
       - --template=my-template
       - --size=1
       - --zone=asia-east1-b
-      - |
-        gcloud logging write build-log "MIG created: my-mig"
 
-  # Step 8: Create HTTP Load Balancer
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Create Load Balancer'
-    args:
-      - compute
-      - target-pools
-      - create
-      - my-target-pool
-      - --region=asia-east1
-      - |
-        gcloud logging write build-log "Target pool created: my-target-pool"
-
-  # Step 9: Create Health Check
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Create Health Check'
-    args:
-      - compute
-      - health-checks
-      - create
-      - http
-      - my-health-check
-      - --port=8080
-      - --request-path="/healthz"
-      - --check-interval=30s
-      - --timeout=10s
-      - --unhealthy-threshold=3
-      - --healthy-threshold=2
-      - |
-        gcloud logging write build-log "Health check created for MIG on port 8080"
-
-  # Step 10: Check Firewall Rule and Create/Update if Needed
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Check Firewall Rule'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        if gcloud compute firewall-rules describe allow-8080 --project=enhub-cloud-interns; then
-          echo "Firewall rule 'allow-8080' already exists. Updating rule."
-          gcloud compute firewall-rules update allow-8080 --allow=tcp:8080 --target-tags=http-server --network=default --project=enhub-cloud-interns
-          gcloud logging write build-log "Firewall rule 'allow-8080' updated."
-        else
-          echo "Creating firewall rule 'allow-8080'."
-          gcloud compute firewall-rules create allow-8080 --allow=tcp:8080 --target-tags=http-server --network=default --project=enhub-cloud-interns
-          gcloud logging write build-log "Firewall rule 'allow-8080' created."
-        fi
-
-  # Step 11: Set Autoscaling for MIG
+  # Step 8: Set Autoscaling for MIG
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Set Autoscaling'
     args:
@@ -175,14 +121,11 @@ steps:
       - create
       - my-mig-autoscaler
       - --zone=asia-east1-b
-      - --target="https://www.googleapis.com/compute/v1/projects/enhub-cloud-interns/zones/asia-east1-b/instanceGroupManagers/my-mig"
+      - --target=https://www.googleapis.com/compute/v1/projects/enhub-cloud-interns/zones/asia-east1-b/instanceGroupManagers/my-mig
       - --cool-down-period=60
       - --min-num-replicas=1
       - --max-num-replicas=10
       - --target-cpu-utilization=0.01
-      - |
-        gcloud logging write build-log "Autoscaling set for MIG: my-mig-autoscaler"
 
-# Logging configuration at the build level
 options:
   logging: CLOUD_LOGGING_ONLY
