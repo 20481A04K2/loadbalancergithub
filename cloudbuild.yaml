@@ -162,6 +162,7 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
+        MIG_NAME="vamsi-mig"
         gcloud compute instance-groups managed update $$MIG_NAME \
           --region=asia-east1 \
           --health-check=vamsi-health-check \
