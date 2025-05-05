@@ -93,7 +93,7 @@ steps:
       - --image-family=debian-11
       - --image-project=debian-cloud
       - --metadata=startup-script= |
-          #!/bin/bash
+          -#!/bin/bash
           apt-get update
           apt-get install -y unzip python3-pip
           curl -o /tmp/source.zip https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$(cat /workspace/version.env | cut -d'=' -f2)/source.zip
