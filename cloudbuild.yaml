@@ -100,16 +100,16 @@ steps:
       - |
         source /workspace/version.env
         MIG_NAME="vamsi-mig"
-        if ! gcloud compute instance-groups managed describe $MIG_NAME --region=asia-east1 > /dev/null 2>&1; then
+        if ! gcloud compute instance-groups managed describe $$MIG_NAME --region=asia-east1 > /dev/null 2>&1; then
           echo "MIG does not exist, creating it..."
-          gcloud compute instance-groups managed create $MIG_NAME \
+          gcloud compute instance-groups managed create $$MIG_NAME \
             --template=vamsi-template-$$VERSION_TAG \
             --size=1 \
             --zone=asia-east1-b \
             --project=enhub-cloud-interns
         else
           echo "MIG exists, updating it..."
-          gcloud compute instance-groups managed set-instance-template $MIG_NAME \
+          gcloud compute instance-groups managed set-instance-template $$MIG_NAME \
             --template=vamsi-template-$$VERSION_TAG \
             --zone=asia-east1-b \
             --project=enhub-cloud-interns
@@ -162,7 +162,7 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud compute instance-groups managed update vamsi-mig \
+        gcloud compute instance-groups managed update $$MIG_NAME \
           --region=asia-east1 \
           --health-check=vamsi-health-check \
           --initial-delay=60s \
@@ -176,7 +176,7 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud compute instance-groups managed set-autoscaling vamsi-mig \
+        gcloud compute instance-groups managed set-autoscaling $$MIG_NAME \
           --zone=asia-east1-b \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
