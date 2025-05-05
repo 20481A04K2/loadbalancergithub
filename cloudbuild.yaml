@@ -1,18 +1,3 @@
-options:
-  logging: CLOUD_LOGGING_ONLY
-
-substitutions:
-  _REGION: asia-east1
-  _ZONE: asia-east1-b
-  _REPO_NAME: vamsi-zip-repo
-  _PACKAGE_NAME: source-package
-  _TEMPLATE_NAME: vamsi-template
-  _MIG_NAME: vamsi-mig
-  _TARGET_POOL: vamsi-target-pool
-  _HEALTH_CHECK: vamsi-health-check
-  _AUTOSCALER: vamsi-autoscaler
-  _PROJECT: enhub-cloud-interns
-
 steps:
   # Step 0: Generate dynamic version
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -22,8 +7,8 @@ steps:
       - '-c'
       - |
         VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
-        echo "VERSION_TAG=$${VERSION_TAG}" > /workspace/version.env
-        echo "Generated version: $${VERSION_TAG}"
+        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $VERSION_TAG"
 
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -31,32 +16,31 @@ steps:
     args:
       - '-c'
       - |
-        if ! gcloud artifacts repositories describe $_REPO_NAME --location=$_REGION --project=$_PROJECT; then
-          echo "Creating Artifact Registry..."
-          gcloud artifacts repositories create $_REPO_NAME --repository-format=generic --location=$_REGION --project=$_PROJECT
+        if ! gcloud artifacts repositories describe vamsi-zip-repo --location=asia-east1 --project=enhub-cloud-interns; then
+          gcloud artifacts repositories create vamsi-zip-repo \
+            --repository-format=generic \
+            --location=asia-east1 \
+            --project=enhub-cloud-interns
         else
-          echo "Artifact Registry already exists."
+          echo "Repository already exists."
         fi
 
-  # Step 2: Download ZIP file from GitHub
+  # Step 2: Download ZIP from GitHub
   - name: 'gcr.io/cloud-builders/curl'
     id: 'Download ZIP from GitHub'
     entrypoint: '/bin/sh'
     args:
       - '-c'
       - |
-        echo "Downloading source.zip..."
         curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
-        echo "Download complete."
 
-  # Step 3: Authenticate with Google Cloud
+  # Step 3: Authenticate with service account
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Authenticate'
     entrypoint: '/bin/sh'
     args:
       - '-c'
       - |
-        echo "Authenticating..."
         gsutil cp gs://vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json /workspace/key.json
         gcloud auth activate-service-account --key-file=/workspace/key.json
 
@@ -67,10 +51,9 @@ steps:
     args:
       - '-c'
       - |
-        echo "ZIP size:"
         du -sh source.zip
 
-  # Step 5: Upload to Artifact Registry
+  # Step 5: Upload ZIP to Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Upload to Artifact Registry'
     entrypoint: 'bash'
@@ -78,16 +61,15 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Uploading source.zip as version $${VERSION_TAG}"
         gcloud artifacts generic upload \
-          --project="$_PROJECT" \
-          --location="$_REGION" \
-          --repository="$_REPO_NAME" \
-          --package="$_PACKAGE_NAME" \
-          --version="$${VERSION_TAG}" \
+          --project="enhub-cloud-interns" \
+          --location="asia-east1" \
+          --repository="vamsi-zip-repo" \
+          --package="source-package" \
+          --version="$VERSION_TAG" \
           --source="source.zip"
 
-  # Step 6: Delete and Create Instance Template with Startup Script
+  # Step 6: Create a new instance template (versioned)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -95,111 +77,73 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud compute instance-templates delete $_TEMPLATE_NAME --quiet --project=$_PROJECT || true
-
-        gcloud compute instance-templates create $_TEMPLATE_NAME \
-          --project=$_PROJECT \
+        TEMPLATE_NAME="vamsi-template-$VERSION_TAG"
+        gcloud compute instance-templates create $TEMPLATE_NAME \
           --machine-type=e2-micro \
-          --image-family=debian-11 \
-          --image-project=debian-cloud \
-          --metadata=startup-script="bash -c '
-            set -e
-            sudo apt-get update
-            sudo apt-get install -y unzip python3-pip
-            mkdir -p /home/sajja_vamsi/my-app
-            curl -o /home/sajja_vamsi/source.zip https://artifactregistry.googleapis.com/v1/projects/$_PROJECT/locations/$_REGION/repositories/$_REPO_NAME/packages/$_PACKAGE_NAME/versions/$${VERSION_TAG}/source.zip
-            unzip -o /home/sajja_vamsi/source.zip -d /home/sajja_vamsi/my-app
+          --region=asia-east1 \
+          --tags=allow-8080 \
+          --metadata=startup-script='#! /bin/bash
+            apt-get update
+            apt-get install -y unzip python3-pip
+            curl -o /tmp/source.zip https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/'"$VERSION_TAG"'/source.zip
+            unzip /tmp/source.zip -d /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main
-            pip3 install --user flask
-            echo Starting Flask app...
-            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &
-          '" \
-          --tags=http-server
+            pip3 install flask
+            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &'
 
-  # Step 7: Create Managed Instance Group
+  # Step 7: Update MIG to use new template
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Create MIG'
+    id: 'Update MIG'
+    entrypoint: 'bash'
     args:
-      - compute
-      - instance-groups
-      - managed
-      - create
-      - $_MIG_NAME
-      - --base-instance-name=vamsi-instance
-      - --template=$_TEMPLATE_NAME
-      - --size=1
-      - --zone=$_ZONE
-      - --project=$_PROJECT
+      - '-c'
+      - |
+        source /workspace/version.env
+        TEMPLATE_NAME="vamsi-template-$VERSION_TAG"
+        gcloud compute instance-groups managed set-instance-template vamsi-mig \
+          --template=$TEMPLATE_NAME \
+          --zone=asia-east1-b
 
-  # Step 8: Create Firewall Rule
+  # Step 8: Update firewall (no-op if exists)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Firewall'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud compute firewall-rules describe allow-8080 --project=$_PROJECT; then
+        if ! gcloud compute firewall-rules describe allow-8080; then
           gcloud compute firewall-rules create allow-8080 \
-            --allow=tcp:8080 \
-            --target-tags=http-server \
-            --network=default \
-            --project=$_PROJECT
+            --allow tcp:8080 \
+            --target-tags=allow-8080 \
+            --description="Allow TCP port 8080" \
+            --direction=INGRESS
         else
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create Health Check
+  # Step 9: Create health check (using root path)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
+    entrypoint: 'bash'
     args:
-      - compute
-      - health-checks
-      - create
-      - http
-      - $_HEALTH_CHECK
-      - --port=8080
-      - --request-path="/"
-      - --check-interval=30s
-      - --timeout=10s
-      - --unhealthy-threshold=3
-      - --healthy-threshold=2
-      - --project=$_PROJECT
+      - '-c'
+      - |
+        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1; then
+          gcloud compute health-checks create http vamsi-health-check \
+            --region=asia-east1 \
+            --port=8080 \
+            --request-path="/" \
+            --check-interval=15s \
+            --timeout=10s \
+            --healthy-threshold=2 \
+            --unhealthy-threshold=3
+        else
+          echo "Health check already exists"
+        fi
 
-  # Step 10: Create Target Pool
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Target Pool'
-    args:
-      - compute
-      - target-pools
-      - create
-      - $_TARGET_POOL
-      - --region=$_REGION
-      - --project=$_PROJECT
+options:
+  logging: CLOUD_LOGGING_ONLY
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
 
-  # Step 11: Add MIG to Target Pool
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Add MIG to Pool'
-    args:
-      - compute
-      - target-pools
-      - add-instances
-      - $_TARGET_POOL
-      - --instances=$(gcloud compute instance-groups managed list-instances $_MIG_NAME --zone=$_ZONE --format='value(instance)')
-      - --zone=$_ZONE
-      - --project=$_PROJECT
-
-  # Step 12: Set Autoscaling
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Autoscale MIG'
-    args:
-      - compute
-      - autoscaler
-      - create
-      - $_AUTOSCALER
-      - --zone=$_ZONE
-      - --target="https://www.googleapis.com/compute/v1/projects/$_PROJECT/zones/$_ZONE/instanceGroupManagers/$_MIG_NAME"
-      - --cool-down-period=60
-      - --min-num-replicas=1
-      - --max-num-replicas=5
-      - --target-cpu-utilization=0.01
-      - --project=$_PROJECT
+substitutions:
+  _UNUSED: "unused"
