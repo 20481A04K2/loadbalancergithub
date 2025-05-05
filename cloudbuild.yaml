@@ -1,5 +1,5 @@
 steps:
-  # Step 0: Generate dynamic version tag
+  # Step 0: Generate dynamic version
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Generate Version'
     entrypoint: 'bash'
@@ -10,58 +10,61 @@ steps:
         echo "VERSION_TAG=$$VERSION_TAG" > /workspace/version.env
         echo "Generated version: $$VERSION_TAG"
 
-  # Step 1: Check or create Artifact Registry
+  # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         if ! gcloud artifacts repositories describe vamsi-zip-repo --location=asia-east1 --project=enhub-cloud-interns; then
-          gcloud artifacts repositories create vamsi-zip-repo \
-            --repository-format=generic \
-            --location=asia-east1 \
-            --project=enhub-cloud-interns
+          echo "Repository doesn't exist. Creating now."
+          gcloud artifacts repositories create vamsi-zip-repo --repository-format=generic --location=asia-east1 --project=enhub-cloud-interns
         else
           echo "Repository already exists."
         fi
 
-  # Step 2: Download ZIP from GitHub
+  # Step 2: Download ZIP file from GitHub
   - name: 'gcr.io/cloud-builders/curl'
     id: 'Download ZIP from GitHub'
     entrypoint: '/bin/sh'
     args:
       - '-c'
       - |
+        echo "Starting download from GitHub..."
         curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
+        echo "Download completed"
 
-  # Step 3: Authenticate service account
+  # Step 3: Authenticate with Google Cloud
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Authenticate'
     entrypoint: '/bin/sh'
     args:
       - '-c'
       - |
+        echo "Authenticating with Google Cloud..."
         gsutil cp gs://vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json /workspace/key.json
         gcloud auth activate-service-account --key-file=/workspace/key.json
+        echo "Authentication successful"
 
-  # Step 4: Show file size
+  # Step 4: Show ZIP file size
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Show ZIP Size'
+    id: 'Show ZIP File Size'
     entrypoint: '/bin/sh'
     args:
       - '-c'
       - |
+        echo "The size of the downloaded ZIP file:"
         du -sh source.zip
 
-  # Step 5: Upload to Artifact Registry
+  # Step 5: Upload ZIP to Artifact Registry with dynamic version
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Upload ZIP'
+    id: 'Upload to Artifact Registry'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Uploading source.zip as version $$VERSION_TAG"
+        echo "Uploading ZIP to Artifact Registry with version: $$VERSION_TAG"
         gcloud artifacts generic upload \
           --project="enhub-cloud-interns" \
           --location="asia-east1" \
@@ -69,6 +72,7 @@ steps:
           --package="source-package" \
           --version="$$VERSION_TAG" \
           --source="source.zip"
+        echo "Upload completed"
 
   # Step 6: Create Instance Template with startup script
   - name: 'gcr.io/cloud-builders/gcloud'
