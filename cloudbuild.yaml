@@ -99,7 +99,11 @@ steps:
       - '-c'
       - |
         MIG_NAME="vamsi-mig"
-        # Check if the MIG exists
+        # Fetch version tag
+        source /workspace/version.env
+        echo "Using version tag: $$VERSION_TAG"
+        
+        # Check if MIG exists
         if gcloud compute instance-groups managed describe $$MIG_NAME --region=asia-east1 > /dev/null 2>&1; then
           echo "MIG $$MIG_NAME exists, updating it..."
           gcloud compute instance-groups managed set-instance-template $$MIG_NAME \
@@ -107,6 +111,10 @@ steps:
             --zone=asia-east1-b
         else
           echo "MIG $$MIG_NAME does not exist, creating it..."
+          if [ -z "$$VERSION_TAG" ]; then
+            echo "ERROR: VERSION_TAG is empty!"
+            exit 1
+          fi
           gcloud compute instance-groups managed create $$MIG_NAME \
             --template=vamsi-template-$$VERSION_TAG \
             --zone=asia-east1-b \
