@@ -183,3 +183,6 @@ steps:
       - --target-cpu-utilization=0.01
       - |
         gcloud logging write build-log "Autoscaling set for MIG: my-mig-autoscaler"
+
+    options:
+        logging: CLOUD_LOGGING_ONLY
