@@ -109,6 +109,8 @@ steps:
       - |
         source /workspace/version.env
         echo "Using version tag: $$VERSION_TAG"
+        
+        # Check if MIG exists, create or update as necessary
         if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
           echo "MIG vamsi-mig does not exist, creating it..."
           gcloud compute instance-groups managed create vamsi-mig \
@@ -122,6 +124,13 @@ steps:
           gcloud compute instance-groups managed set-instance-template vamsi-mig \
             --template=vamsi-template-$$VERSION_TAG \
             --zone=asia-east1-b
+          
+          # Trigger a rolling restart to apply the new startup script
+          echo "Triggering rolling restart of MIG instances to apply the new startup script..."
+          gcloud compute instance-groups managed rolling-action start \
+            --group=vamsi-mig \
+            --zone=asia-east1-b \
+            --action=RESTART
         fi
 
   # Step 8: Create firewall rule if not exists
