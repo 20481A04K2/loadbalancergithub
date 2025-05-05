@@ -74,7 +74,7 @@ steps:
           --source="source.zip"
         echo "Upload completed"
 
-  # Step 6: Create Instance Template with fixed startup script
+  # Step 6: Create Instance Template with startup script
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -82,26 +82,41 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        gcloud compute instance-templates create vamsi-template-$$VERSION_TAG \
+        gcloud compute instance-templates create vamsi-template-$${VERSION_TAG} \
           --machine-type=e2-micro \
           --tags=allow-8080 \
           --region=asia-east1 \
           --metadata=startup-script='#! /bin/bash
             exec > /var/log/startup-script.log 2>&1
             echo "Startup script started."
+
             apt-get update -y
-            apt-get install -y unzip python3-pip curl
+            apt-get install -y unzip python3-pip python3-venv curl
+
             mkdir -p /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi
-            TOKEN=$(gcloud auth print-access-token)
-            curl -fL -H "Authorization: Bearer $$TOKEN" \
+
+            echo "Fetching ZIP from Artifact Registry"
+            TOKEN=$$(gcloud auth print-access-token)
+            curl -fL -H "Authorization: Bearer $${TOKEN}" \
               -o source.zip \
-              "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$$VERSION_TAG/source.zip"
+              "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$${VERSION_TAG}/source.zip"
+
+            echo "Unzipping app..."
             unzip -o source.zip -d my-app
             cd my-app/* || exit 1
-            pip3 install flask
-            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &
-            echo "Startup script finished."'
+
+            echo "Creating virtual environment and installing Flask..."
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install --no-cache-dir flask
+
+            echo "Starting Flask app on port 8080"
+            nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/flask.log 2>&1 &
+
+            echo "Startup script completed."
+          '
+
 
   # Step 7: Create or Update MIG
   - name: 'gcr.io/cloud-builders/gcloud'
