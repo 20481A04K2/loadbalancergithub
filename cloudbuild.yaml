@@ -1,106 +1,212 @@
 steps:
+  # Step 0: Generate dynamic version
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Generate Version'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        VERSION_TAG="v-$(date +%Y%m%d-%H%M%S)"
+        echo "VERSION_TAG=$VERSION_TAG" > /workspace/version.env
+        echo "Generated version: $VERSION_TAG"
+
   # Step 1: Check/create Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud artifacts repositories describe vamsi-artifact-repo --location=asia-east1 --project=enhub-cloud-interns; then
+        if ! gcloud artifacts repositories describe vamsi-zip-repo --location=asia-east1 --project=enhub-cloud-interns; then
           echo "Repository doesn't exist. Creating now."
-          gcloud artifacts repositories create vamsi-artifact-repo --repository-format=docker --location=asia-east1 --project=enhub-cloud-interns
+          gcloud artifacts repositories create vamsi-zip-repo --repository-format=generic --location=asia-east1 --project=enhub-cloud-interns
         else
           echo "Repository already exists."
-        fi
 
-  # Step 2: Build Docker image
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'asia-east1-docker.pkg.dev/enhub-cloud-interns/vamsi-artifact-repo/my-app:latest', '.']
+  # Step 2: Download ZIP file from GitHub
+  - name: 'gcr.io/cloud-builders/curl'
+    id: 'Download ZIP from GitHub'
+    entrypoint: '/bin/sh'
+    args:
+      - '-c'
+      - |
+        echo "Starting download from GitHub..."
+        curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
+        echo "Download completed"
 
-  # Step 3: Push Docker image
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'asia-east1-docker.pkg.dev/enhub-cloud-interns/vamsi-artifact-repo/my-app:latest']
-
-  # Step 4: Delete existing VM
+  # Step 3: Authenticate with Google Cloud
   - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Authenticate'
+    entrypoint: '/bin/sh'
+    args:
+      - '-c'
+      - |
+        echo "Authenticating with Google Cloud..."
+        gsutil cp gs://vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json /workspace/key.json
+        gcloud auth activate-service-account --key-file=/workspace/key.json
+        echo "Authentication successful"
+
+  # Step 4: Show ZIP File Size
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Show ZIP File Size'
+    entrypoint: '/bin/sh'
+    args:
+      - '-c'
+      - |
+        echo "The size of the downloaded ZIP file:"
+        du -sh source.zip
+
+  # Step 5: Upload ZIP to Artifact Registry with dynamic version
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Upload to Artifact Registry'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        echo "Deleting VM if it exists..."
-        gcloud compute instances delete my-vm-instance --zone=asia-east1-b --quiet || true
+        source /workspace/version.env
+        echo "Uploading ZIP to Artifact Registry with version: $VERSION_TAG"
+        gcloud artifacts generic upload \
+          --project="enhub-cloud-interns" \
+          --location="asia-east1" \
+          --repository="vamsi-zip-repo" \
+          --package="source-package" \
+          --version="$VERSION_TAG" \
+          --source="source.zip"
+        echo "Upload completed"
 
-  # Step 5: Create new VM
+  # Step 6: Create Instance Template with Startup Script
   - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Instance Template'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        source /workspace/version.env
+        gcloud compute instance-templates create my-template \
+          --machine-type=e2-micro \
+          --image-family=debian-11 \
+          --image-project=debian-cloud \
+          --tags=http-server \
+          --metadata=startup-script='#!/bin/bash
+            apt-get update
+            apt-get install -y unzip python3-pip curl
+            curl -o /tmp/source.zip "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$VERSION_TAG/artifacts/source.zip" 
+            unzip /tmp/source.zip -d /opt/app
+            cd /opt/app/cloudbuildzipfile-main
+            pip3 install flask
+            nohup python3 app.py > /var/log/app.log 2>&1 &'
+
+  # Step 7: Create Managed Instance Group
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create MIG'
     args:
       - compute
-      - instances
+      - instance-groups
+      - managed
       - create
-      - my-vm-instance
+      - my-mig
+      - --base-instance-name=my-instance
+      - --template=my-template
+      - --size=1
       - --zone=asia-east1-b
-      - --machine-type=e2-micro
-      - --image-family=debian-11
-      - --image-project=debian-cloud
-      - --boot-disk-size=10GB
-      - --tags=http-server,https-server
-      - --scopes=https://www.googleapis.com/auth/cloud-platform
-      - --service-account=1064351983714-compute@developer.gserviceaccount.com
-      - --project=enhub-cloud-interns
 
-  # Step 6: SSH to install Docker
+  # Step 8: Set Autoscaling Policy
   - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Set Autoscaling'
     args:
       - compute
-      - ssh
-      - sajja_vamsi@my-vm-instance
+      - instance-groups
+      - managed
+      - set-autoscaling
+      - my-mig
       - --zone=asia-east1-b
-      - --project=enhub-cloud-interns
-      - --command=sudo apt-get update && sudo apt-get install -y docker.io
+      - --min-num-replicas=1
+      - --max-num-replicas=5
+      - --target-cpu-utilization=0.01
+      - --cool-down-period=60
 
-  # Step 7: Pull and save Docker image to tar
-  - name: 'gcr.io/cloud-builders/docker'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        docker pull asia-east1-docker.pkg.dev/enhub-cloud-interns/vamsi-artifact-repo/my-app:latest
-        docker save -o /workspace/my-app.tar asia-east1-docker.pkg.dev/enhub-cloud-interns/vamsi-artifact-repo/my-app:latest
-
-  # Step 8: Copy tar to VM
+  # Step 9: Create Firewall Rule to allow port 8080
   - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Firewall Rule'
     args:
       - compute
-      - scp
-      - /workspace/my-app.tar
-      - sajja_vamsi@my-vm-instance:~
-      - --zone=asia-east1-b
-      - --project=enhub-cloud-interns
+      - firewall-rules
+      - create
+      - allow-8080
+      - --allow=tcp:8080
+      - --target-tags=http-server
+      - --description=Allow-port-8080
+      - --direction=INGRESS
+      - --priority=1000
+      - --network=default
 
-  # Step 9: SSH into VM, load and run container
+  # Step 10: Create Health Check on port 8080
   - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Health Check'
     args:
       - compute
-      - ssh
-      - sajja_vamsi@my-vm-instance
-      - --zone=asia-east1-b
-      - --project=enhub-cloud-interns
-      - --command=sudo docker load -i my-app.tar && sudo docker run -d -p 8080:8080 asia-east1-docker.pkg.dev/enhub-cloud-interns/vamsi-artifact-repo/my-app:latest
+      - health-checks
+      - create
+      - http
+      - my-health-check
+      - --port=8080
 
-  # ✅ Step 10: Check app and fetch secret version 1
+  # Step 11: Create Backend Service
   - name: 'gcr.io/cloud-builders/gcloud'
-    entrypoint: 'bash'
+    id: 'Create Backend Service'
     args:
-      - '-c'
-      - |
-        echo "Checking if application is running on port 8080..."
-        if gcloud compute ssh sajja_vamsi@my-vm-instance --zone=asia-east1-b --project=enhub-cloud-interns --command='curl -s http://localhost:8080' &>/dev/null; then
-          echo "Application is running. Fetching secret..."
-          gcloud compute ssh sajja_vamsi@my-vm-instance --zone=asia-east1-b --project=enhub-cloud-interns --command='gcloud secrets versions access 1 --secret=my-app-secret --project=enhub-cloud-interns'
-        else
-          echo "Application is NOT running. Skipping secret fetch."
-        fi
+      - compute
+      - backend-services
+      - create
+      - my-backend-service
+      - --protocol=HTTP
+      - --port-name=http
+      - --health-checks=my-health-check
+      - --global
 
-images:
-  - 'asia-east1-docker.pkg.dev/enhub-cloud-interns/vamsi-artifact-repo/my-app:latest'
+  # Step 12: Add MIG to Backend Service
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Add Backend'
+    args:
+      - compute
+      - backend-services
+      - add-backend
+      - my-backend-service
+      - --instance-group=my-mig
+      - --instance-group-zone=asia-east1-b
+      - --global
+
+  # Step 13: Create URL Map
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create URL Map'
+    args:
+      - compute
+      - url-maps
+      - create
+      - my-url-map
+      - --default-service=my-backend-service
+
+  # Step 14: Create Target HTTP Proxy
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create HTTP Proxy'
+    args:
+      - compute
+      - target-http-proxies
+      - create
+      - my-http-proxy
+      - --url-map=my-url-map
+
+  # Step 15: Create Global Forwarding Rule (uses ephemeral IP)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Forwarding Rule'
+    args:
+      - compute
+      - forwarding-rules
+      - create
+      - my-forwarding-rule
+      - --global
+      - --target-http-proxy=my-http-proxy
+      - --ports=80
+      - --load-balancing-scheme=EXTERNAL
 
 options:
   logging: CLOUD_LOGGING_ONLY
