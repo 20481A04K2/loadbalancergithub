@@ -73,7 +73,7 @@ steps:
           --version="$$VERSION_TAG" \
           --source="source.zip"
         echo "Upload completed"
-
+  
   # Step 6: Create Instance Template with startup script
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
