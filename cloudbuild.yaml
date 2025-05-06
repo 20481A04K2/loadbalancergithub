@@ -166,10 +166,10 @@ steps:
             --region=asia-east1 \
             --port=8080 \
             --request-path="/" \
-            --check-interval=5s \
-            --timeout=5s \
+            --check-interval=15s \
+            --timeout=10s \
             --healthy-threshold=2 \
-            --unhealthy-threshold=2 \
+            --unhealthy-threshold=3 \
             --project=enhub-cloud-interns
         else
           echo "Health check already exists."
@@ -199,7 +199,7 @@ steps:
           --zone=asia-east1-b \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
-          --target-cpu-utilization=0.15 \
+          --target-cpu-utilization=0.05 \
           --cool-down-period=60s \
           --project=enhub-cloud-interns
 
