@@ -31,7 +31,7 @@ steps:
       - '-c'
       - |
         echo "Starting download from GitHub..."
-        curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
+        curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
         echo "Download completed"
 
   # Step 3: Authenticate with Google Cloud
@@ -74,7 +74,7 @@ steps:
           --source="source.zip"
         echo "Upload completed"
 
-  # Step 6: Create Instance Template with updated startup script
+  # Step 6: Create Instance Template with startup script
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -90,41 +90,30 @@ steps:
             exec > /var/log/startup-script.log 2>&1
             echo "Startup script started."
 
-            # Update package lists
-            sudo apt-get update -y
+            # Install dependencies
+            apt-get update -y
+            apt-get install -y unzip python3-pip python3-venv curl
 
-            # Install necessary packages
-            sudo apt-get install -y unzip curl python3-pip python3.11-venv
+            # Download ZIP from GitHub
+            echo "Fetching ZIP from GitHub..."
+            curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
 
-            # Create app directory
             mkdir -p /home/sajja_vamsi/my-app
+            cd /home/sajja_vamsi
 
-            # Set correct ownership
-            sudo chown -R sajja_vamsi:sajja_vamsi /home/sajja_vamsi/my-app
+            # Unzip the app files
+            echo "Unzipping app..."
+            unzip -o source.zip -d my-app
+            cd my-app/cloudbuildzipfile-main || exit 1
 
-            # Switch to the user directory
-            cd /home/sajja_vamsi/my-app
-
-            # Download the new source ZIP from GitHub
-            echo "Downloading ZIP..."
-            curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
-
-            # Unzip the file
-            echo "Unzipping..."
-            unzip source.zip -d .
-
-            # Change to the app directory
-            cd loadbalancergithub-main || exit
-
-            # Create Python virtual environment
+            # Setup Python environment
+            echo "Creating virtual environment and installing Flask..."
             python3 -m venv venv
-
-            # Activate virtual environment and install Flask
             source venv/bin/activate
             pip install flask
 
-            # Run the Flask app in the background and log output
-            nohup python3 app.py > /home/sajja_vamsi/app.log 2>&1 &
+            echo "Starting Flask app on port 8080"
+            nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/flask.log 2>&1 &
 
             echo "Startup script completed."
           '
@@ -172,16 +161,15 @@ steps:
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create health check
+  # Step 9: Create global health check
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 > /dev/null 2>&1; then
+        if ! gcloud compute health-checks describe vamsi-health-check --project=enhub-cloud-interns > /dev/null 2>&1; then
           gcloud compute health-checks create http vamsi-health-check \
-            --region=asia-east1 \
             --port=8080 \
             --request-path="/" \
             --check-interval=5s \
@@ -193,7 +181,7 @@ steps:
           echo "Health check already exists."
         fi
 
-  # Step 10: Attach health check to MIG for autohealing
+  # Step 10: Attach global health check for autohealing
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Autohealing'
     entrypoint: 'bash'
