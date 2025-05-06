@@ -31,7 +31,7 @@ steps:
       - '-c'
       - |
         echo "Starting download from GitHub..."
-        curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
+        curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
         echo "Download completed"
 
   # Step 3: Authenticate with Google Cloud
@@ -56,7 +56,7 @@ steps:
         echo "The size of the downloaded ZIP file:"
         du -sh source.zip
 
-  # Step 5: Upload ZIP to Artifact Registry with dynamic version
+  # Step 5: Upload ZIP to Artifact Registry
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Upload to Artifact Registry'
     entrypoint: 'bash'
@@ -90,23 +90,17 @@ steps:
             exec > /var/log/startup-script.log 2>&1
             echo "Startup script started."
 
-            # Install dependencies
             apt-get update -y
             apt-get install -y unzip python3-pip python3-venv curl
 
-            # Download ZIP from GitHub
             echo "Fetching ZIP from GitHub..."
-            curl -L https://github.com/20481A04K2/cloudbuildzipfile/archive/refs/heads/main.zip -o source.zip
+            curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
 
             mkdir -p /home/sajja_vamsi/my-app
             cd /home/sajja_vamsi
-
-            # Unzip the app files
-            echo "Unzipping app..."
             unzip -o source.zip -d my-app
-            cd my-app/cloudbuildzipfile-main || exit 1
+            cd my-app/loadbalancergithub-main || exit 1
 
-            # Setup Python environment
             echo "Creating virtual environment and installing Flask..."
             python3 -m venv venv
             source venv/bin/activate
@@ -114,11 +108,10 @@ steps:
 
             echo "Starting Flask app on port 8080"
             nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/flask.log 2>&1 &
-
             echo "Startup script completed."
           '
 
-  # Step 7: Create or update MIG
+  # Step 7: Create or update MIG with 180s initial delay
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create or Update MIG'
     entrypoint: 'bash'
@@ -133,7 +126,7 @@ steps:
             --template=vamsi-template-$$VERSION_TAG \
             --size=1 \
             --zone=asia-east1-b \
-            --initial-delay=60s
+            --initial-delay=180s
         else
           echo "Updating MIG with new template..."
           gcloud compute instance-groups managed set-instance-template vamsi-mig \
@@ -143,7 +136,7 @@ steps:
             --zone=asia-east1-b
         fi
 
-  # Step 8: Create firewall rule
+  # Step 8: Firewall rule
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Firewall'
     entrypoint: 'bash'
@@ -161,15 +154,16 @@ steps:
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create global health check
+  # Step 9: Create health check
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud compute health-checks describe vamsi-health-check --project=enhub-cloud-interns > /dev/null 2>&1; then
+        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 > /dev/null 2>&1; then
           gcloud compute health-checks create http vamsi-health-check \
+            --region=asia-east1 \
             --port=8080 \
             --request-path="/" \
             --check-interval=5s \
@@ -181,7 +175,7 @@ steps:
           echo "Health check already exists."
         fi
 
-  # Step 10: Attach global health check for autohealing
+  # Step 10: Attach health check with increased initial delay
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Autohealing'
     entrypoint: 'bash'
@@ -191,7 +185,7 @@ steps:
         gcloud compute instance-groups managed update vamsi-mig \
           --zone=asia-east1-b \
           --health-check=vamsi-health-check \
-          --initial-delay=60s \
+          --initial-delay=180s \
           --project=enhub-cloud-interns
 
   # Step 11: Enable autoscaling
@@ -205,7 +199,7 @@ steps:
           --zone=asia-east1-b \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
-          --target-cpu-utilization=0.01 \
+          --target-cpu-utilization=0.03 \
           --cool-down-period=60s \
           --project=enhub-cloud-interns
 
