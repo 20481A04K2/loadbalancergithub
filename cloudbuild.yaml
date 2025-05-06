@@ -74,7 +74,7 @@ steps:
           --source="source.zip"
         echo "Upload completed"
 
-  # Step 6: Create Instance Template with startup script
+  # Step 6: Create Instance Template with startup script (including authentication + download ZIP + run Flask app)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create Instance Template'
     entrypoint: 'bash'
@@ -93,14 +93,18 @@ steps:
             apt-get update -y
             apt-get install -y unzip python3-pip python3-venv curl
 
-            mkdir -p /home/sajja_vamsi/my-app
-            cd /home/sajja_vamsi
+            echo "Authenticating..."
+            curl -o key.json https://storage.googleapis.com/vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json
+            gcloud auth activate-service-account --key-file=key.json
 
             echo "Fetching ZIP from Artifact Registry"
             TOKEN=$$(gcloud auth print-access-token)
             curl -fL -H "Authorization: Bearer $${TOKEN}" \
               -o source.zip \
               "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$${VERSION_TAG}/source.zip"
+
+            mkdir -p /home/sajja_vamsi/my-app
+            cd /home/sajja_vamsi
 
             echo "Unzipping app..."
             unzip -o source.zip -d my-app
@@ -117,8 +121,7 @@ steps:
             echo "Startup script completed."
           '
 
-
-  # Step 7: Create or Update MIG
+  # Step 7: Create or update MIG
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create or Update MIG'
     entrypoint: 'bash'
@@ -126,9 +129,8 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Using version tag: $$VERSION_TAG"
         if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
-          echo "MIG vamsi-mig does not exist, creating it..."
+          echo "Creating MIG..."
           gcloud compute instance-groups managed create vamsi-mig \
             --base-instance-name=vamsi-instance \
             --template=vamsi-template-$$VERSION_TAG \
@@ -136,16 +138,15 @@ steps:
             --zone=asia-east1-b \
             --initial-delay=60s
         else
-          echo "MIG already exists, updating template..."
+          echo "Updating MIG with new template..."
           gcloud compute instance-groups managed set-instance-template vamsi-mig \
             --template=vamsi-template-$$VERSION_TAG \
             --zone=asia-east1-b
-          echo "Forcing rolling restart to apply new template..."
           gcloud compute instance-groups managed rolling-action restart vamsi-mig \
             --zone=asia-east1-b
         fi
 
-  # Step 8: Create firewall rule if not exists
+  # Step 8: Create firewall rule
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Firewall'
     entrypoint: 'bash'
@@ -184,7 +185,7 @@ steps:
           echo "Health check already exists."
         fi
 
-  # Step 10: Attach health check for autohealing
+  # Step 10: Attach health check to MIG for autohealing
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Autohealing'
     entrypoint: 'bash'
