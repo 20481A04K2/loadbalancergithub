@@ -1,5 +1,5 @@
 steps:
-  # Step 0: Generate dynamic version
+  # Step 0: Generate dynamic version tag
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Generate Version'
     entrypoint: 'bash'
@@ -74,94 +74,145 @@ steps:
           --source="source.zip"
         echo "Upload completed"
 
-  # Step 5b: Upload ZIP to GCS
-  - name: 'gcr.io/cloud-builders/gsutil'
-    id: 'Upload ZIP to GCS'
+  # Step 6: Create Instance Template with startup script (including authentication + download ZIP + run Flask app)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Instance Template'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
         source /workspace/version.env
-        gsutil cp source.zip gs://vamsi-artifact-bucket/source-$$VERSION_TAG.zip
-        echo "Uploaded source.zip to GCS"
+        gcloud compute instance-templates create vamsi-template-$${VERSION_TAG} \
+          --machine-type=e2-micro \
+          --tags=allow-8080 \
+          --region=asia-east1 \
+          --metadata=startup-script='#! /bin/bash
+            exec > /var/log/startup-script.log 2>&1
+            echo "Startup script started."
 
-  # Step 6: Delete VM if it exists
+            apt-get update -y
+            apt-get install -y unzip python3-pip python3-venv curl
+
+            echo "Authenticating..."
+            curl -o key.json https://storage.googleapis.com/vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json
+            gcloud auth activate-service-account --key-file=key.json
+
+            echo "Fetching ZIP from Artifact Registry"
+            TOKEN=$$(gcloud auth print-access-token)
+            curl -fL -H "Authorization: Bearer $${TOKEN}" \
+              -o source.zip \
+              "https://artifactregistry.googleapis.com/v1/projects/enhub-cloud-interns/locations/asia-east1/repositories/vamsi-zip-repo/packages/source-package/versions/$${VERSION_TAG}/source.zip"
+
+            mkdir -p /home/sajja_vamsi/my-app
+            cd /home/sajja_vamsi
+
+            echo "Unzipping app..."
+            unzip -o source.zip -d my-app
+            cd my-app/* || exit 1
+
+            echo "Creating virtual environment and installing Flask..."
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install --no-cache-dir flask
+
+            echo "Starting Flask app on port 8080"
+            nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/flask.log 2>&1 &
+
+            echo "Startup script completed."
+          '
+
+  # Step 7: Create or update MIG
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Delete VM if exists'
+    id: 'Create or Update MIG'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        echo "Checking if VM exists..."
-        if gcloud compute instances describe my-vm-instance --zone=asia-east1-b --project=enhub-cloud-interns; then
-          echo "VM exists. Deleting it now..."
-          gcloud compute instances delete my-vm-instance --zone=asia-east1-b --quiet
+        source /workspace/version.env
+        if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
+          echo "Creating MIG..."
+          gcloud compute instance-groups managed create vamsi-mig \
+            --base-instance-name=vamsi-instance \
+            --template=vamsi-template-$$VERSION_TAG \
+            --size=1 \
+            --zone=asia-east1-b \
+            --initial-delay=60s
         else
-          echo "VM does not exist. Proceeding to create a new VM."
+          echo "Updating MIG with new template..."
+          gcloud compute instance-groups managed set-instance-template vamsi-mig \
+            --template=vamsi-template-$$VERSION_TAG \
+            --zone=asia-east1-b
+          gcloud compute instance-groups managed rolling-action restart vamsi-mig \
+            --zone=asia-east1-b
         fi
 
-  # Step 7: Create a new VM
+  # Step 8: Create firewall rule
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Create VM'
-    args:
-      - compute
-      - instances
-      - create
-      - my-vm-instance
-      - --zone=asia-east1-b
-      - --machine-type=e2-micro
-      - --image-family=debian-11
-      - --image-project=debian-cloud
-      - --boot-disk-size=10GB
-      - --tags=http-server,https-server
-      - --scopes=https://www.googleapis.com/auth/cloud-platform
-      - --service-account=1064351983714-compute@developer.gserviceaccount.com
-      - --project=enhub-cloud-interns
-
-  # Step 8: Add SSH key to VM
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Add SSH key to VM'
-    args:
-      - compute
-      - instances
-      - add-metadata
-      - my-vm-instance
-      - --zone=asia-east1-b
-      - --metadata=ssh-keys="sajja_vamsi:$(cat /workspace/ssh_key.pub)"
-      - --project=enhub-cloud-interns
-
-  # Step 9: Copy ZIP file to VM
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Copy ZIP to VM'
-    args:
-      - compute
-      - scp
-      - source.zip
-      - sajja_vamsi@my-vm-instance:/home/sajja_vamsi
-      - --zone=asia-east1-b
-      - --project=enhub-cloud-interns
-
-  # Step 10: SSH into VM, install Flask and run app
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Unzip and Run Flask App'
+    id: 'Firewall'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        gcloud compute ssh sajja_vamsi@my-vm-instance \
+        if ! gcloud compute firewall-rules describe allow-8080 --project=enhub-cloud-interns > /dev/null 2>&1; then
+          gcloud compute firewall-rules create allow-8080 \
+            --allow tcp:8080 \
+            --target-tags=allow-8080 \
+            --direction=INGRESS \
+            --priority=1000 \
+            --project=enhub-cloud-interns
+        else
+          echo "Firewall rule already exists"
+        fi
+
+  # Step 9: Create health check
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Health Check'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 > /dev/null 2>&1; then
+          gcloud compute health-checks create http vamsi-health-check \
+            --region=asia-east1 \
+            --port=8080 \
+            --request-path="/" \
+            --check-interval=5s \
+            --timeout=5s \
+            --healthy-threshold=2 \
+            --unhealthy-threshold=2 \
+            --project=enhub-cloud-interns
+        else
+          echo "Health check already exists."
+        fi
+
+  # Step 10: Attach health check to MIG for autohealing
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Autohealing'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud compute instance-groups managed update vamsi-mig \
           --zone=asia-east1-b \
-          --project=enhub-cloud-interns \
-          --command="bash -c '
-            set -e
-            sudo apt-get update
-            sudo apt-get install -y unzip python3-pip curl
-            curl -o source.zip https://storage.googleapis.com/vamsi-artifact-bucket/source-$$VERSION_TAG.zip
-            unzip -o source.zip -d /home/sajja_vamsi/my-app
-            cd /home/sajja_vamsi/my-app/cloudbuildzipfile-main
-            pip3 install --user flask
-            echo Starting Flask app...
-            nohup python3 app.py > /home/sajja_vamsi/flask.log 2>&1 &
-          '"
+          --health-check=vamsi-health-check \
+          --initial-delay=60s \
+          --project=enhub-cloud-interns
+
+  # Step 11: Enable autoscaling
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Enable Autoscaling'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud compute instance-groups managed set-autoscaling vamsi-mig \
+          --zone=asia-east1-b \
+          --min-num-replicas=1 \
+          --max-num-replicas=5 \
+          --target-cpu-utilization=0.01 \
+          --cool-down-period=60s \
+          --project=enhub-cloud-interns
 
 options:
   logging: CLOUD_LOGGING_ONLY
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
