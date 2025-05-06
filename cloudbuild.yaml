@@ -154,16 +154,15 @@ steps:
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create health check
+  # Step 9: Create global health check
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 > /dev/null 2>&1; then
+        if ! gcloud compute health-checks describe vamsi-health-check --project=enhub-cloud-interns > /dev/null 2>&1; then
           gcloud compute health-checks create http vamsi-health-check \
-            --region=asia-east1 \
             --port=8080 \
             --request-path="/" \
             --check-interval=15s \
