@@ -89,7 +89,6 @@ steps:
           --metadata=startup-script='#! /bin/bash
             exec > /var/log/startup-script.log 2>&1
             echo "Startup script started."
-
             apt-get update -y
             apt-get install -y unzip python3-pip python3-venv curl
 
@@ -184,7 +183,7 @@ steps:
         gcloud compute instance-groups managed update vamsi-mig \
           --zone=asia-east1-b \
           --health-check=vamsi-health-check \
-          --initial-delay=180s \
+          --initial-delay=300s \
           --project=enhub-cloud-interns
 
   # Step 11: Enable autoscaling
