@@ -197,7 +197,7 @@ steps:
           --zone=asia-east1-b \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
-          --target-cpu-utilization=0.05 \
+          --target-cpu-utilization=0.60 \
           --cool-down-period=60s \
           --project=enhub-cloud-interns
 
