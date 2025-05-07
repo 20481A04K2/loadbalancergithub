@@ -96,10 +96,9 @@ steps:
           python3 -m venv venv
           source venv/bin/activate
           pip install flask
-          nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/app.log 2>&1 &
-          echo "Startup script completed."'
+          nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/app.log 2>&1 &'
 
-  # Step 7: Create/Update Regional MIG
+  # Step 7: Create or update MIG (Zonal, fixed)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Create or Update MIG'
     entrypoint: 'bash'
@@ -107,22 +106,23 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        if ! gcloud compute instance-groups managed describe vamsi-mig --region=asia-east1 > /dev/null 2>&1; then
+        if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
+          echo "Creating MIG..."
           gcloud compute instance-groups managed create vamsi-mig \
-            --region=asia-east1 \
+            --base-instance-name=vamsi-instance \
             --template=vamsi-template-$$VERSION_TAG \
             --size=1 \
-            --instance-distribution-policy-zones=asia-east1-b,asia-east1-c \
-            --initial-delay=180s
+            --zone=asia-east1-b
         else
+          echo "Updating MIG with new template..."
           gcloud compute instance-groups managed set-instance-template vamsi-mig \
-            --region=asia-east1 \
-            --template=vamsi-template-$$VERSION_TAG
+            --template=vamsi-template-$$VERSION_TAG \
+            --zone=asia-east1-b
           gcloud compute instance-groups managed rolling-action restart vamsi-mig \
-            --region=asia-east1
+            --zone=asia-east1-b
         fi
 
-  # Step 8: Create firewall rule (if not exists)
+  # Step 8: Firewall rule
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Firewall'
     entrypoint: 'bash'
@@ -136,9 +136,11 @@ steps:
             --direction=INGRESS \
             --priority=1000 \
             --project=enhub-cloud-interns
+        else
+          echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create health check (only if it doesn't exist)
+  # Step 9: Create global health check
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
@@ -146,21 +148,19 @@ steps:
       - '-c'
       - |
         if ! gcloud compute health-checks describe vamsi-health-check --project=enhub-cloud-interns > /dev/null 2>&1; then
-          echo "Creating health check..."
           gcloud compute health-checks create http vamsi-health-check \
-            --project=enhub-cloud-interns \
             --port=8080 \
             --request-path="/" \
             --check-interval=15s \
             --timeout=10s \
             --healthy-threshold=2 \
-            --unhealthy-threshold=3
+            --unhealthy-threshold=3 \
+            --project=enhub-cloud-interns
         else
-          echo "Health check already exists. Skipping creation."
+          echo "Health check already exists."
         fi
 
-
-  # Step 10: Attach health check to MIG (regional)
+  # Step 10: Attach health check
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Autohealing'
     entrypoint: 'bash'
@@ -168,7 +168,7 @@ steps:
       - '-c'
       - |
         gcloud compute instance-groups managed update vamsi-mig \
-          --region=asia-east1 \
+          --zone=asia-east1-b \
           --health-check=vamsi-health-check \
           --initial-delay=300s \
           --project=enhub-cloud-interns
@@ -181,7 +181,7 @@ steps:
       - '-c'
       - |
         gcloud compute instance-groups managed set-autoscaling vamsi-mig \
-          --region=asia-east1 \
+          --zone=asia-east1-b \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
           --target-cpu-utilization=0.60 \
