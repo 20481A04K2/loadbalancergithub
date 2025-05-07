@@ -17,10 +17,10 @@ steps:
       - '-c'
       - |
         if ! gcloud artifacts repositories describe vamsi-zip-repo --location=asia-east1 --project=enhub-cloud-interns; then
-          echo "Repository doesn't exist. Creating now."
-          gcloud artifacts repositories create vamsi-zip-repo --repository-format=generic --location=asia-east1 --project=enhub-cloud-interns
-        else
-          echo "Repository already exists."
+          gcloud artifacts repositories create vamsi-zip-repo \
+            --repository-format=generic \
+            --location=asia-east1 \
+            --project=enhub-cloud-interns
         fi
 
   # Step 2: Download ZIP file from GitHub
@@ -30,9 +30,7 @@ steps:
     args:
       - '-c'
       - |
-        echo "Starting download from GitHub..."
         curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
-        echo "Download completed"
 
   # Step 3: Authenticate with Google Cloud
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -41,10 +39,8 @@ steps:
     args:
       - '-c'
       - |
-        echo "Authenticating with Google Cloud..."
         gsutil cp gs://vamsi-artifact-bucket/enhub-cloud-interns-004fbd59b047.json /workspace/key.json
         gcloud auth activate-service-account --key-file=/workspace/key.json
-        echo "Authentication successful"
 
   # Step 4: Show ZIP file size
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -53,7 +49,6 @@ steps:
     args:
       - '-c'
       - |
-        echo "The size of the downloaded ZIP file:"
         du -sh source.zip
 
   # Step 5: Upload ZIP to Artifact Registry
@@ -64,7 +59,6 @@ steps:
       - '-c'
       - |
         source /workspace/version.env
-        echo "Uploading ZIP to Artifact Registry with version: $$VERSION_TAG"
         gcloud artifacts generic upload \
           --project="enhub-cloud-interns" \
           --location="asia-east1" \
@@ -72,93 +66,63 @@ steps:
           --package="source-package" \
           --version="$$VERSION_TAG" \
           --source="source.zip"
-        echo "Upload completed"
 
-# Step 6: Create Regional Instance Template with updated startup script
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Create Instance Template'
-  entrypoint: 'bash'
-  args:
-    - '-c'
-    - |
-      source /workspace/version.env
-      gcloud compute instance-templates create vamsi-template-${VERSION_TAG} \
-        --project="enhub-cloud-interns" \
-        --machine-type="e2-medium" \
-        --region="asia-east1" \
-        --boot-disk-size=10GB \
-        --boot-disk-type=pd-balanced \
-        --image-family=debian-12 \
-        --image-project=debian-cloud \
-        --tags=http-server,https-server \
-        --metadata=startup-script='#!/bin/bash
-echo "Startup script started."
-
-# Update package lists
-sudo apt-get update -y
-
-# Install necessary packages
-sudo apt-get install -y unzip curl python3-pip python3.11-venv
-
-# Create app directory
-mkdir -p /home/sajja_vamsi/my-app
-
-# Set correct ownership
-sudo chown -R sajja_vamsi:sajja_vamsi /home/sajja_vamsi/my-app
-
-# Switch to the user directory
-cd /home/sajja_vamsi/my-app
-
-# Download the new source ZIP from GitHub
-echo "Downloading ZIP..."
-curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
-
-# Unzip the file
-echo "Unzipping..."
-unzip source.zip -d .
-
-# Change to the app directory (adjust path if needed)
-cd loadbalancergithub-main || exit
-
-# Create Python virtual environment
-python3 -m venv venv
-
-# Activate virtual environment and install Flask
-source venv/bin/activate
-pip install flask
-
-# Run the Flask app in the background and log output
-nohup python3 app.py > /home/sajja_vamsi/app.log 2>&1 &
-
-echo "Startup script completed."
-        '
-
-# Step 7: Create or Update REGIONAL MIG with updated template
-- name: 'gcr.io/cloud-builders/gcloud'
-  id: 'Create or Update MIG'
-  entrypoint: 'bash'
-  args:
-    - '-c'
-    - |
-      source /workspace/version.env
-      if ! gcloud compute instance-groups managed describe vamsi-mig --region=asia-east1 > /dev/null 2>&1; then
-        echo "Creating MIG..."
-        gcloud compute instance-groups managed create vamsi-mig \
+  # Step 6: Create Instance Template (Regional)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Instance Template'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        source /workspace/version.env
+        gcloud compute instance-templates create vamsi-template-$$VERSION_TAG \
+          --machine-type=e2-medium \
           --region=asia-east1 \
-          --template=vamsi-template-${VERSION_TAG} \
-          --size=1 \
-          --instance-redistribution-type=PROACTIVE \
-          --target-distribution-shape=EVEN
-      else
-        echo "Updating MIG with new template..."
-        gcloud compute instance-groups managed set-instance-template vamsi-mig \
-          --region=asia-east1 \
-          --template=vamsi-template-${VERSION_TAG}
-        gcloud compute instance-groups managed rolling-action restart vamsi-mig \
-          --region=asia-east1
-      fi
+          --image-family=debian-12 \
+          --image-project=debian-cloud \
+          --tags=http-server,https-server,allow-8080 \
+          --metadata=startup-script='#!/bin/bash
+          echo "Startup script started."
+          apt-get update -y
+          apt-get install -y unzip curl python3-pip python3.11-venv
+          mkdir -p /home/sajja_vamsi/my-app
+          chown -R sajja_vamsi:sajja_vamsi /home/sajja_vamsi/my-app
+          cd /home/sajja_vamsi/my-app
+          echo "Downloading ZIP..."
+          curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
+          echo "Unzipping..."
+          unzip source.zip -d .
+          cd loadbalancergithub-main || exit
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install flask
+          nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/app.log 2>&1 &
+          echo "Startup script completed."'
 
-  # Step 8: Firewall rule
+  # Step 7: Create/Update Regional MIG
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create or Update MIG'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        source /workspace/version.env
+        if ! gcloud compute instance-groups managed describe vamsi-mig --region=asia-east1 > /dev/null 2>&1; then
+          gcloud compute instance-groups managed create vamsi-mig \
+            --region=asia-east1 \
+            --template=vamsi-template-$$VERSION_TAG \
+            --size=1 \
+            --instance-distribution-policy-zones=asia-east1-b,asia-east1-c \
+            --initial-delay=180s
+        else
+          gcloud compute instance-groups managed set-instance-template vamsi-mig \
+            --region=asia-east1 \
+            --template=vamsi-template-$$VERSION_TAG
+          gcloud compute instance-groups managed rolling-action restart vamsi-mig \
+            --region=asia-east1
+        fi
+
+  # Step 8: Create firewall rule (if not exists)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Firewall'
     entrypoint: 'bash'
@@ -172,11 +136,9 @@ echo "Startup script completed."
             --direction=INGRESS \
             --priority=1000 \
             --project=enhub-cloud-interns
-        else
-          echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create global health check
+  # Step 9: Create health check (only if it doesn't exist)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Health Check'
     entrypoint: 'bash'
@@ -184,19 +146,21 @@ echo "Startup script completed."
       - '-c'
       - |
         if ! gcloud compute health-checks describe vamsi-health-check --project=enhub-cloud-interns > /dev/null 2>&1; then
+          echo "Creating health check..."
           gcloud compute health-checks create http vamsi-health-check \
+            --project=enhub-cloud-interns \
             --port=8080 \
             --request-path="/" \
             --check-interval=15s \
             --timeout=10s \
             --healthy-threshold=2 \
-            --unhealthy-threshold=3 \
-            --project=enhub-cloud-interns
+            --unhealthy-threshold=3
         else
-          echo "Health check already exists."
+          echo "Health check already exists. Skipping creation."
         fi
 
-  # Step 10: Attach health check with increased initial delay
+
+  # Step 10: Attach health check to MIG (regional)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Autohealing'
     entrypoint: 'bash'
@@ -204,7 +168,7 @@ echo "Startup script completed."
       - '-c'
       - |
         gcloud compute instance-groups managed update vamsi-mig \
-          --zone=asia-east1-b \
+          --region=asia-east1 \
           --health-check=vamsi-health-check \
           --initial-delay=300s \
           --project=enhub-cloud-interns
@@ -217,7 +181,7 @@ echo "Startup script completed."
       - '-c'
       - |
         gcloud compute instance-groups managed set-autoscaling vamsi-mig \
-          --zone=asia-east1-b \
+          --region=asia-east1 \
           --min-num-replicas=1 \
           --max-num-replicas=5 \
           --target-cpu-utilization=0.60 \
