@@ -140,14 +140,14 @@ steps:
           echo "Firewall rule already exists"
         fi
 
-  # Step 9: Create global health check
+  # Step 9: Create regional health check
   - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Health Check'
+    id: 'Regional Health Check'
     entrypoint: 'bash'
     args:
       - '-c'
       - |
-        if ! gcloud compute health-checks describe vamsi-health-check --project=enhub-cloud-interns > /dev/null 2>&1; then
+        if ! gcloud compute health-checks describe vamsi-health-check --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
           gcloud compute health-checks create http vamsi-health-check \
             --port=8080 \
             --request-path="/" \
@@ -155,9 +155,10 @@ steps:
             --timeout=10s \
             --healthy-threshold=2 \
             --unhealthy-threshold=3 \
+            --region=asia-east1 \
             --project=enhub-cloud-interns
         else
-          echo "Health check already exists."
+          echo "Regional health check already exists."
         fi
 
   # Step 10: Attach health check
@@ -187,6 +188,7 @@ steps:
           --target-cpu-utilization=0.60 \
           --cool-down-period=60s \
           --project=enhub-cloud-interns
+
   # Step 12: Reserve a static external IP (Zonal)
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'Reserve Static IP'
@@ -209,8 +211,7 @@ steps:
     args:
       - '-c'
       - |
-        if ! gcloud compute backend-services describe vamsi-backend-service \
-            --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
+        if ! gcloud compute backend-services describe vamsi-backend-service --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
           gcloud compute backend-services create vamsi-backend-service \
             --protocol=HTTP \
             --health-checks=vamsi-health-check \
@@ -274,12 +275,11 @@ steps:
     args:
       - '-c'
       - |
-        if ! gcloud compute forwarding-rules describe vamsi-forwarding-rule \
-            --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
+        if ! gcloud compute forwarding-rules describe vamsi-forwarding-rule --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
           gcloud compute forwarding-rules create vamsi-forwarding-rule \
-            --address=vamsi-zonal-ip \
-            --ports=80 \
             --target-http-proxy=vamsi-target-proxy \
+            --ports=80 \
+            --address=vamsi-zonal-ip \
             --region=asia-east1 \
             --project=enhub-cloud-interns
         else
