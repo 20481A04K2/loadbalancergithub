@@ -187,6 +187,104 @@ steps:
           --target-cpu-utilization=0.60 \
           --cool-down-period=60s \
           --project=enhub-cloud-interns
+  # Step 12: Reserve a static external IP (Zonal)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Reserve Static IP'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if ! gcloud compute addresses describe vamsi-zonal-ip --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
+          gcloud compute addresses create vamsi-zonal-ip \
+            --region=asia-east1 \
+            --project=enhub-cloud-interns
+        else
+          echo "Static IP already exists."
+        fi
+
+  # Step 13: Create backend service (Zonal)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Backend Service'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if ! gcloud compute backend-services describe vamsi-backend-service \
+            --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
+          gcloud compute backend-services create vamsi-backend-service \
+            --protocol=HTTP \
+            --health-checks=vamsi-health-check \
+            --region=asia-east1 \
+            --port-name=http \
+            --project=enhub-cloud-interns
+        else
+          echo "Backend service already exists."
+        fi
+
+  # Step 14: Attach MIG to backend service
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Attach MIG to Backend'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Attaching MIG to backend service..."
+        gcloud compute backend-services add-backend vamsi-backend-service \
+          --instance-group=vamsi-mig \
+          --instance-group-zone=asia-east1-b \
+          --region=asia-east1 \
+          --project=enhub-cloud-interns
+
+  # Step 15: Create URL map
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create URL Map'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if ! gcloud compute url-maps describe vamsi-url-map --project=enhub-cloud-interns > /dev/null 2>&1; then
+          gcloud compute url-maps create vamsi-url-map \
+            --default-service=vamsi-backend-service \
+            --region=asia-east1 \
+            --project=enhub-cloud-interns
+        else
+          echo "URL map already exists."
+        fi
+
+  # Step 16: Create HTTP target proxy
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Target Proxy'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if ! gcloud compute target-http-proxies describe vamsi-target-proxy --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
+          gcloud compute target-http-proxies create vamsi-target-proxy \
+            --url-map=vamsi-url-map \
+            --region=asia-east1 \
+            --project=enhub-cloud-interns
+        else
+          echo "Target proxy already exists."
+        fi
+
+  # Step 17: Create forwarding rule (Zonal)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'Create Forwarding Rule'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if ! gcloud compute forwarding-rules describe vamsi-forwarding-rule \
+            --region=asia-east1 --project=enhub-cloud-interns > /dev/null 2>&1; then
+          gcloud compute forwarding-rules create vamsi-forwarding-rule \
+            --address=vamsi-zonal-ip \
+            --ports=80 \
+            --target-http-proxy=vamsi-target-proxy \
+            --region=asia-east1 \
+            --project=enhub-cloud-interns
+        else
+          echo "Forwarding rule already exists."
+        fi
 
 options:
   logging: CLOUD_LOGGING_ONLY
