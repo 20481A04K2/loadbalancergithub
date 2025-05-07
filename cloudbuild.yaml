@@ -74,66 +74,89 @@ steps:
           --source="source.zip"
         echo "Upload completed"
 
-  # Step 6: Create Instance Template with startup script
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Create Instance Template'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        source /workspace/version.env
-        gcloud compute instance-templates create vamsi-template-$${VERSION_TAG} \
-          --machine-type=e2-micro \
-          --tags=allow-8080 \
+# Step 6: Create Regional Instance Template with updated startup script
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'Create Instance Template'
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+      source /workspace/version.env
+      gcloud compute instance-templates create vamsi-template-${VERSION_TAG} \
+        --project="enhub-cloud-interns" \
+        --machine-type="e2-medium" \
+        --region="asia-east1" \
+        --boot-disk-size=10GB \
+        --boot-disk-type=pd-balanced \
+        --image-family=debian-12 \
+        --image-project=debian-cloud \
+        --tags=http-server,https-server \
+        --metadata=startup-script='#!/bin/bash
+echo "Startup script started."
+
+# Update package lists
+sudo apt-get update -y
+
+# Install necessary packages
+sudo apt-get install -y unzip curl python3-pip python3.11-venv
+
+# Create app directory
+mkdir -p /home/sajja_vamsi/my-app
+
+# Set correct ownership
+sudo chown -R sajja_vamsi:sajja_vamsi /home/sajja_vamsi/my-app
+
+# Switch to the user directory
+cd /home/sajja_vamsi/my-app
+
+# Download the new source ZIP from GitHub
+echo "Downloading ZIP..."
+curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
+
+# Unzip the file
+echo "Unzipping..."
+unzip source.zip -d .
+
+# Change to the app directory (adjust path if needed)
+cd loadbalancergithub-main || exit
+
+# Create Python virtual environment
+python3 -m venv venv
+
+# Activate virtual environment and install Flask
+source venv/bin/activate
+pip install flask
+
+# Run the Flask app in the background and log output
+nohup python3 app.py > /home/sajja_vamsi/app.log 2>&1 &
+
+echo "Startup script completed."
+        '
+
+# Step 7: Create or Update REGIONAL MIG with updated template
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'Create or Update MIG'
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+      source /workspace/version.env
+      if ! gcloud compute instance-groups managed describe vamsi-mig --region=asia-east1 > /dev/null 2>&1; then
+        echo "Creating MIG..."
+        gcloud compute instance-groups managed create vamsi-mig \
           --region=asia-east1 \
-          --metadata=startup-script='#! /bin/bash
-            exec > /var/log/startup-script.log 2>&1
-            echo "Startup script started."
-            apt-get update -y
-            apt-get install -y unzip python3-pip python3-venv curl
-
-            echo "Fetching ZIP from GitHub..."
-            curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
-
-            mkdir -p /home/sajja_vamsi/my-app
-            cd /home/sajja_vamsi
-            unzip -o source.zip -d my-app
-            cd my-app/loadbalancergithub-main || exit 1
-
-            echo "Creating virtual environment and installing Flask..."
-            python3 -m venv venv
-            source venv/bin/activate
-            pip install flask
-
-            echo "Starting Flask app on port 8080"
-            nohup python3 app.py --host=0.0.0.0 --port=8080 > /home/sajja_vamsi/flask.log 2>&1 &
-            echo "Startup script completed."
-          '
-
-  # Step 7: Create or update MIG with 180s initial delay
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: 'Create or Update MIG'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        source /workspace/version.env
-        if ! gcloud compute instance-groups managed describe vamsi-mig --zone=asia-east1-b > /dev/null 2>&1; then
-          echo "Creating MIG..."
-          gcloud compute instance-groups managed create vamsi-mig \
-            --base-instance-name=vamsi-instance \
-            --template=vamsi-template-$$VERSION_TAG \
-            --size=1 \
-            --zone=asia-east1-b \
-            --initial-delay=180s
-        else
-          echo "Updating MIG with new template..."
-          gcloud compute instance-groups managed set-instance-template vamsi-mig \
-            --template=vamsi-template-$$VERSION_TAG \
-            --zone=asia-east1-b
-          gcloud compute instance-groups managed rolling-action restart vamsi-mig \
-            --zone=asia-east1-b
-        fi
+          --template=vamsi-template-${VERSION_TAG} \
+          --size=1 \
+          --instance-redistribution-type=PROACTIVE \
+          --target-distribution-shape=EVEN
+      else
+        echo "Updating MIG with new template..."
+        gcloud compute instance-groups managed set-instance-template vamsi-mig \
+          --region=asia-east1 \
+          --template=vamsi-template-${VERSION_TAG}
+        gcloud compute instance-groups managed rolling-action restart vamsi-mig \
+          --region=asia-east1
+      fi
 
   # Step 8: Firewall rule
   - name: 'gcr.io/cloud-builders/gcloud'
