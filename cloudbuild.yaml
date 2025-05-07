@@ -91,7 +91,7 @@ steps:
           echo "Downloading ZIP..."
           curl -L https://github.com/20481A04K2/loadbalancergithub/archive/refs/heads/main.zip -o source.zip
           echo "Unzipping..."
-          unzip source.zip -d .
+          unzip source.zip -d . 
           cd loadbalancergithub-main || exit
           python3 -m venv venv
           source venv/bin/activate
